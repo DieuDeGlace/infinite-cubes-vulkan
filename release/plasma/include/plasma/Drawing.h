@@ -1,5 +1,5 @@
 // Drawing tessellates shape paths into vertex, texture-coordinate, colour and index arrays, with texture adjustments.
-// D3D11Drawing uploads and renders these arrays.
+// VulkanDrawing uploads and renders these arrays.
 #pragma once
 #include <vector>
 #include "plasma/Vector.h"
@@ -38,7 +38,7 @@ public:
     Drawing();
     virtual ~Drawing();
 
-    // Recomputes the bounds of the paths (m_minimum/m_maximum) and reserves the input arrays. D3D11Drawing's override
+    // Recomputes the bounds of the paths (m_minimum/m_maximum) and reserves the input arrays. VulkanDrawing's override
     // also rebuilds its buffers.
     virtual void update();
     virtual void draw(Node *node, const Vector<4, float> &color) {}
@@ -57,7 +57,7 @@ public:
                               bool &first) const;
 
 protected:
-    // Input arrays; tessellation writes triangles to m_pathIndices. D3D11Drawing::update interleaves m_pathVertices,
+    // Input arrays; tessellation writes triangles to m_pathIndices. VulkanDrawing::update interleaves m_pathVertices,
     // m_pathTextureCoordinates and m_pathColors into its vertex buffer and uploads m_pathIndices.
     std::vector<Vector<2, float>> m_pathVertices;
     std::vector<Vector<2, float>> m_pathTextureCoordinates;
@@ -69,7 +69,7 @@ protected:
     std::vector<std::vector<int>> m_unusedB0;
     bool m_contourFill; // cleared by the constructor (plasma: set on a filled contour shape's fill drawing; never read)
     Texture *m_texture;
-    Matrix<float> m_textureMatrix; // passed to the engine by D3D11Drawing::draw
+    Matrix<float> m_textureMatrix; // passed to the engine by VulkanDrawing::draw
     float m_textureOpacity;        // the four go to the engine's shape constants
     float m_textureBrightness;
     float m_textureContrast;

@@ -1,9 +1,12 @@
 // Builds and updates the UI; see cube/Interface.h. Layout values are pixel positions, extents, text sizes and RGBA
 // colours for the named controls.
 #include "cube/Interface.h"
+#include "cube/Progression.h"
 
+#include <algorithm>
 #include <sstream>
 #include <iomanip>
+#include <stdexcept>
 #include "cube/Common.h"
 #include "cube/WorldMap.h"
 #include <windows.h>
@@ -36,13 +39,14 @@
 #include "cube/World.h"
 #include "cube/WorldInfo.h"
 #include "cube/widgets/WorldPreviewWidget.h"
-#include "plasma/D3D11Engine.h"
+#include "plasma/Engine.h"
 #include "plasma/Display.h"
 #include "plasma/Engine.h"
 #include "plasma/Font.h"
 #include "plasma/Matrix.h"
 #include "plasma/Node.h"
 #include "plasma/PLXStreamReader.h"
+#include "plasma/ScalableFont.h"
 #include "plasma/TextShape.h"
 #include "plasma/Transformation.h"
 #include "plasma/Widget.h"
@@ -79,6 +83,15 @@ void Interface::addButtonCenter(plasma::Widget *widget, int x, int y)
     m_buttonCenters.push_back(plasma::Vector<2, int>((int)point[0], (int)point[1]));
 }
 
+static plasma::Node *takeGuiTemplate(plasma::Node &gui, const wchar_t *name, plasma::Node *parent = nullptr)
+{
+    plasma::Node *node = gui.findNode(name);
+    if (!node)
+        throw std::runtime_error("gui.plx is missing the " + NarrowString(name) + " template.");
+    node->setParent(parent);
+    return node;
+}
+
 // Builds the whole widget tree. Every screen is a child of the engine's root: the start menu, the character selection
 // and creation, the world selection and creation, and the in-game interface (m_inGame.m_node). The icons of icons.plx
 // stay in a node without a parent (m_icons), as do the templates taken out of gui.plx (the life bars, "blackwidget",
@@ -105,7 +118,9 @@ void Interface::load(const std::vector<ResolutionInfo> *displayModes)
 
     // The icons: auras by their id, the rarity frames, abilities by their id.
     m_icons = m_game->m_engine->createNode(nullptr, nullptr, nullptr, nullptr);
-    m_game->m_engine->readPlasmaFileIntoNode(L"icons.plx", m_icons, (1 << plasma::LOAD_HINTED_TEXT), nullptr, keys);
+    if (!m_game->m_engine->readPlasmaFileIntoNode(L"icons.plx", m_icons, (1 << plasma::LOAD_HINTED_TEXT), nullptr,
+                                                  keys))
+        throw std::runtime_error("Cannot read icons.plx.");
     m_auraIcons[BuffBulwark] = m_icons->findNode(L"aura:bulwark");
     m_auraIcons[BuffWarfrenzy] = m_icons->findNode(L"aura:warfrenzy");
     m_auraIcons[BuffCamouflage] = m_icons->findNode(L"aura:camouflage");
@@ -149,7 +164,8 @@ void Interface::load(const std::vector<ResolutionInfo> *displayModes)
 
     // The interface's own graphics.
     plasma::Node *gui = m_game->m_engine->createNode(nullptr, nullptr, nullptr, nullptr);
-    m_game->m_engine->readPlasmaFileIntoNode(L"gui.plx", gui, (1 << plasma::LOAD_HINTED_TEXT), nullptr, keys);
+    if (!m_game->m_engine->readPlasmaFileIntoNode(L"gui.plx", gui, (1 << plasma::LOAD_HINTED_TEXT), nullptr, keys))
+        throw std::runtime_error("Cannot read gui.plx.");
     m_game->m_engine->readPlasmaFileIntoNode(L"quest-tag.plx", gui, (1 << plasma::LOAD_HINTED_TEXT), nullptr, keys);
 
     // The start menu and its "Please wait..." text.
@@ -169,8 +185,7 @@ void Interface::load(const std::vector<ResolutionInfo> *displayModes)
     m_wait = m_game->m_engine->createNode(nullptr, wait, nullptr, m_game->m_engine->root(), L"wait");
 
     m_inGame.m_auraBar = m_game->m_engine->createNode(nullptr, nullptr, nullptr, m_inGame.m_node);
-    m_inGame.m_comboPoints = gui->findNode(L"combopoints");
-    m_inGame.m_comboPoints->setParent(m_inGame.m_node);
+    m_inGame.m_comboPoints = takeGuiTemplate(*gui, L"combopoints", m_inGame.m_node);
 
     // The map icons stay where gui.plx put them.
     m_enemyIcon = gui->findNode(L"enemy");
@@ -221,58 +236,42 @@ void Interface::load(const std::vector<ResolutionInfo> *displayModes)
     m_demonPortalIcon = gui->findNode(L"demonportal");
 
     // The templates, detached from gui.plx.
-    m_enemyLifeBarSmall = gui->findNode(L"enemylifebar:small");
-    m_enemyLifeBarSmall->setParent(nullptr);
-    m_friendLifeBarSmall = gui->findNode(L"friendlifebar:small");
-    m_friendLifeBarSmall->setParent(nullptr);
-    m_staticLifeBarSmall = gui->findNode(L"staticlifebar:small");
-    m_staticLifeBarSmall->setParent(nullptr);
-    m_neutralLifeBarSmall = gui->findNode(L"neutrallifebar:small");
-    m_neutralLifeBarSmall->setParent(nullptr);
-    m_enemyLifeBar = gui->findNode(L"enemylifebar");
-    m_enemyLifeBar->setParent(nullptr);
-    m_friendLifeBar = gui->findNode(L"friendlifebar");
-    m_friendLifeBar->setParent(nullptr);
-    m_staticLifeBar = gui->findNode(L"staticlifebar");
-    m_staticLifeBar->setParent(nullptr);
-    m_neutralLifeBar = gui->findNode(L"neutrallifebar");
-    m_neutralLifeBar->setParent(nullptr);
-    m_blackWidget = gui->findNode(L"blackwidget");
-    m_blackWidget->setParent(nullptr);
-    m_speech = gui->findNode(L"speech");
-    m_speech->setParent(nullptr);
-    plasma::Node *leftButton = gui->findNode(L"leftbutton");
-    leftButton->setParent(nullptr);
-    plasma::Node *rightButton = gui->findNode(L"rightbutton");
-    rightButton->setParent(nullptr);
-    plasma::Node *upButton = gui->findNode(L"upbutton");
-    upButton->setParent(nullptr);
-    plasma::Node *downButton = gui->findNode(L"downbutton");
-    downButton->setParent(nullptr);
-    plasma::Node *scrollButton = gui->findNode(L"scrollbutton");
-    scrollButton->setParent(nullptr);
-    plasma::Node *edit = gui->findNode(L"edit");
-    edit->setParent(nullptr);
+    m_enemyLifeBarSmall = takeGuiTemplate(*gui, L"enemylifebar:small");
+    m_friendLifeBarSmall = takeGuiTemplate(*gui, L"friendlifebar:small");
+    m_staticLifeBarSmall = takeGuiTemplate(*gui, L"staticlifebar:small");
+    m_neutralLifeBarSmall = takeGuiTemplate(*gui, L"neutrallifebar:small");
+    m_enemyLifeBar = takeGuiTemplate(*gui, L"enemylifebar");
+    m_friendLifeBar = takeGuiTemplate(*gui, L"friendlifebar");
+    m_staticLifeBar = takeGuiTemplate(*gui, L"staticlifebar");
+    m_neutralLifeBar = takeGuiTemplate(*gui, L"neutrallifebar");
+    m_blackWidget = takeGuiTemplate(*gui, L"blackwidget");
+    m_speech = takeGuiTemplate(*gui, L"speech");
+    plasma::Node *leftButton = takeGuiTemplate(*gui, L"leftbutton");
+    plasma::Node *rightButton = takeGuiTemplate(*gui, L"rightbutton");
+    plasma::Node *upButton = takeGuiTemplate(*gui, L"upbutton");
+    plasma::Node *downButton = takeGuiTemplate(*gui, L"downbutton");
+    plasma::Node *scrollButton = takeGuiTemplate(*gui, L"scrollbutton");
+    plasma::Node *edit = takeGuiTemplate(*gui, L"edit");
     // The button templates' labels and frames must not take the pointer.
-    plasma::Node *button = gui->findNode(L"button");
+    plasma::Node *button = takeGuiTemplate(*gui, L"button");
     for (auto &child : button->m_children)
         child->setHitTestable(false);
-    button->setParent(nullptr);
-    plasma::Node *button2 = gui->findNode(L"button2");
+    plasma::Node *button2 = takeGuiTemplate(*gui, L"button2");
     for (auto &child : button2->m_children)
         child->setHitTestable(false);
-    button2->setParent(nullptr);
-    plasma::Node *smallButton = gui->findNode(L"smallbutton");
+    plasma::Node *smallButton = takeGuiTemplate(*gui, L"smallbutton");
     for (auto &child : smallButton->m_children)
         child->setHitTestable(false);
-    smallButton->setParent(nullptr);
 
     // The options and controls panels, on the root.
     m_optionsWidget =
         new OptionsWidget(m_game, m_blackWidget->instance(m_game->m_engine->root()), leftButton, rightButton, button2);
     m_optionsWidget->m_resolutions = *displayModes;
     m_optionsWidget->setOptions(m_game->m_options);
-    m_optionsWidget->resizeTo(450.0f, 560.0f, true);
+    // OptionsWidget draws its rows from 26, 28 apart. Apply, OK and Cancel are laid out 15 high but draw about 66 high,
+    // reaching 92 above the dialog's bottom, so leave that much and a margin under the last row.
+    constexpr int OptionRows = 21;
+    m_optionsWidget->resizeTo(450.0f, 26.0f + OptionRows * 28.0f + 90.0f, true);
     m_optionsWidget->getNode()->setVisible(false);
     m_controlsWidget = new ControlsWidget(m_game, m_blackWidget->instance(m_game->m_engine->root()), button2, upButton,
                                           downButton, scrollButton);
@@ -308,13 +307,22 @@ void Interface::load(const std::vector<ResolutionInfo> *displayModes)
     m_createCharacterButton->setText(L"Create Character");
     m_createCharacterButton->widget()->connect(plasma::WIDGET_EVENT_POINTER_RELEASED, m_game, &Game::onDoneCharacter,
                                                true, true);
-    m_characterStyleNode = m_blackWidget->instance(m_characterCreationNode);
-    m_characterStyleNode->setTransformation(m_characterStyleNode->transformation()->clone());
-    m_characterStyleNode->setDisplay(m_characterStyleNode->display()->clone());
-    m_characterStyleNode->widget()->resizeTo(300.0f, 330.0f, true);
+    auto creationPanel = [&]() {
+        auto *panel = m_blackWidget->instance(m_characterCreationNode);
+        panel->makeTransformationUnique();
+        panel->makeDisplayUnique();
+        panel->widget()->resizeTo(300.0f, 330.0f, true);
+        return panel;
+    };
+    m_characterStyleNode = creationPanel();
     m_characterStyleWidget = new CharacterStyleWidget(
         m_game, m_game->m_engine->createNode(nullptr, nullptr, nullptr, nullptr), leftButton, rightButton);
     m_characterStyleNode->moveIntoWidget(m_blackWidget->getName(), m_characterStyleWidget, true);
+    m_secondHairNode = creationPanel();
+    auto *secondHair =
+        new SecondHairWidget(*m_characterStyleWidget, m_game->m_engine->createNode(nullptr, nullptr, nullptr, nullptr),
+                             leftButton, rightButton);
+    m_secondHairNode->moveIntoWidget(m_blackWidget->getName(), secondHair, true);
 
     m_inGame.m_goldText = createText(L"100", L"gold", m_inGame.m_node, 0, 24, 5);
     m_inGame.m_contextItemText = createText(L"100", L"contextitem", m_inGame.m_node, 0, 24, 5);
@@ -461,7 +469,7 @@ void Interface::load(const std::vector<ResolutionInfo> *displayModes)
     m_inGame.m_levelText->setParent(m_inGame.m_node);
     m_inGame.m_levelInfo = gui->findNode(L"levelinfo");
     m_inGame.m_levelInfo->setParent(m_inGame.m_node);
-    m_inGame.m_levelInfo->setVisible(false);
+    m_inGame.m_levelInfo->setVisible(m_game->m_world->m_pyroProgression);
     m_inGame.m_xpBar = m_inGame.m_levelInfo->findNode(L"xpbar");
     m_inGame.m_hpBar = gui->findNode(L"hpbar");
     m_inGame.m_hpBar->setParent(m_inGame.m_quickBar);
@@ -483,6 +491,9 @@ void Interface::load(const std::vector<ResolutionInfo> *displayModes)
     m_inGame.m_infoTextSmall->setParent(m_inGame.m_node);
     m_inGame.m_infoTextLarge = createText(L"", L"info", m_inGame.m_node, (1 << plasma::TEXT_RIGHT), 28, 6);
     m_inGame.m_infoTextMedium = createText(L"", L"info", m_inGame.m_node, (1 << plasma::TEXT_RIGHT), 21, 5);
+    m_inGame.m_townQuestTracker = createText(L"", L"town-quests", m_inGame.m_node, 0, 16, 3);
+    m_inGame.m_townQuestTracker->setIgnoresPointer(true);
+    m_inGame.m_townQuestTracker->setVisible(false);
     m_inGame.m_location = gui->findNode(L"location");
     m_inGame.m_location->setParent(m_inGame.m_node);
     m_inGame.m_location->setIgnoresPointer(true);
@@ -881,7 +892,29 @@ void Interface::updateResolution(int width, int height)
     m_characterName->setPosition((float)(width / 2), (float)height, 0.0f, -50.0f);
     m_createCharacterButton->setPosition(width - m_createCharacterButton->widget()->viewWidth(),
                                          height - m_createCharacterButton->widget()->getViewHeight(), -20.0f, -20.0f);
-    m_characterStyleNode->setPosition(0.0f, height - m_characterStyleNode->widget()->getViewHeight(), 20.0f, -20.0f);
+    // Place the appearance panels together to the left of the character. On narrow layouts the name
+    // field or Create button can extend into this area, so leave the bottom row free when needed.
+    constexpr float margin = 20.0f;
+    constexpr float gap = 10.0f;
+    const auto panelSize = m_characterStyleNode->widget()->getContentSize();
+    const float viewWidth = width / m_scale, viewHeight = height / m_scale;
+    const float pairWidth = 2 * panelSize[0] + gap;
+    const float widthFit = std::min(1.0f, (viewWidth * 0.5f - 2 * margin) / pairWidth);
+    const float nameLeft = m_characterName->findNode(L"edit")->widget()->getContentPosition()[0] / m_scale;
+    const float createLeft = m_createCharacterButton->widget()->getContentPosition()[0] / m_scale;
+    const float footer = margin + widthFit * pairWidth + gap > std::min(nameLeft, createLeft) ? 80.0f : margin;
+    const float backBottom = margin + m_backButton->widget()->getContentSize()[1];
+    const float heightFit = (viewHeight - backBottom - gap - footer) / panelSize[1];
+    const float fit = std::max(0.01f, std::min(widthFit, heightFit));
+    for (auto *panel : {m_characterStyleNode, m_secondHairNode}) {
+        auto *transform = panel->transformation();
+        transform->m_deformation.value().identity();
+        transform->m_deformation.value().scale(fit, fit);
+        transform->attributesChanged(true);
+    }
+    const float top = -footer - fit * panelSize[1];
+    m_characterStyleNode->setPosition(0.0f, (float)height, margin, top);
+    m_secondHairNode->setPosition(0.0f, (float)height, margin + fit * (panelSize[0] + gap), top);
     m_worldName->setPosition((float)(width / 2), (float)height, 0.0f, -50.0f);
     m_worldSeed->setPosition((float)(width / 2), (float)height, 0.0f, -100.0f);
     m_createWorldButton->setPosition(width - m_createWorldButton->widget()->viewWidth(),
@@ -905,6 +938,7 @@ void Interface::updateResolution(int width, int height)
     m_inGame.m_infoTextSmall->setPosition((float)width, 0.0f, -120.0f, 20.0f);
     m_inGame.m_infoTextLarge->setPosition((float)width, 0.0f, -120.0f, 60.0f);
     m_inGame.m_infoTextMedium->setPosition((float)width, 0.0f, -120.0f, 100.0f);
+    m_inGame.m_townQuestTracker->setPosition(0.0f, 0.0f, 24.0f, 108.0f);
     m_inGame.m_location->setPosition((float)(width / 2), (float)(height / 3), 0.0f, 0.0f);
     m_inGame.m_crosshair->setPosition((float)(width / 2), (float)(height / 2), 0.0f, 0.0f);
     m_inGame.m_zoomCrosshair->setPosition((float)(width / 2), (float)(height / 2), 0.0f, 0.0f);
@@ -1069,7 +1103,7 @@ void Interface::update(float step)
         plasma::Vector<2, float> pivot(0.0f, 0.0f);
         plasma::Vector<2, float> position;
         if (m_game->m_gamepadActive) {
-            plasma::D3D11Engine *engine = m_game->m_engine;
+            plasma::Engine *engine = m_game->m_engine;
             float bounce = cosf(engine->getCaretClock() * 0.01f) * 8.0f;
             position = engine->getPointer() + plasma::Vector<2, float>(0.0f, bounce);
         } else {
@@ -1286,13 +1320,17 @@ void Interface::update(float step)
     text.str(L"");
     text << (int)(m_game->m_world->m_localCreature->m_entityData.mp * 100.0f) << "/100";
     m_inGame.m_mpBar->setText(L"text", text.str(), true);
-    int level = m_game->m_world->m_localCreature->m_entityData.level;
-    int experience = m_game->m_world->m_localCreature->m_entityData.xp;
+    const auto &player = *m_game->m_world->m_localCreature;
+    const int level = player.displayLevel();
+    const int experience = player.m_entityData.xp;
+    const int requiredXP = player.m_pyroProgression ? progression::xpToNext(level) : maxExperience(level);
     text.str(L"");
     text << level;
     m_inGame.m_levelText->setText(text.str());
     text.str(L"");
-    text << experience << L"/" << maxExperience(level);
+    if (player.m_pyroProgression)
+        text << L"LV " << level << L"  ";
+    text << experience << L"/" << requiredXP << L" XP";
     m_inGame.m_levelInfo->setText(L"xp", text.str(), true);
     text.str(L"");
     text << m_game->m_world->m_localCreature->m_inventory.m_gold;
@@ -1317,7 +1355,8 @@ void Interface::update(float step)
     m_inGame.m_mpBarFill->m_transformation->attributesChanged(true);
     m_inGame.m_mpBarFill->setVisible(true);
     m_inGame.m_xpBar->m_transformation->m_deformation.value().identity();
-    m_inGame.m_xpBar->m_transformation->m_deformation.value().scale((float)experience / maxExperience(level), 1.0f);
+    m_inGame.m_xpBar->m_transformation->m_deformation.value().scale(
+        std::clamp(float(experience) / requiredXP, 0.0f, 1.0f), 1.0f);
     m_inGame.m_xpBar->m_transformation->attributesChanged(true);
     World::BiomeSample sample;
     m_game->m_world->biomeSample((int)m_game->m_world->m_localCreature->m_entityData.position[0],
@@ -1554,6 +1593,12 @@ void Interface::update(float step)
     previousHitCombo = (unsigned char)m_game->m_world->m_localCreature->m_entityData.hitCombo;
     m_inGame.m_comboPoints->setVisible(m_inGame.m_comboPoints->isPlaying());
     m_inGame.m_missionTag->setVisible(m_inGame.m_missionTag->isPlaying());
+    auto questText = m_game->townQuestSummary();
+    if (questText != m_inGame.m_townQuestText) {
+        m_inGame.m_townQuestTracker->setText(questText);
+        m_inGame.m_townQuestText = std::move(questText);
+    }
+    m_inGame.m_townQuestTracker->setVisible(!m_inGame.m_townQuestText.empty() && !m_mapOpen && !m_inGame.m_menuOpen);
     m_game->m_engine->advance((int)step);
 }
 

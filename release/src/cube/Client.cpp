@@ -50,13 +50,25 @@ Client::Client(Game *game)
 
 Client::~Client()
 {
-    connect(g_localSteamId);
+    shutdown();
     DeleteCriticalSection(&m_receivedPacketsLock);
-    for (std::pair<CSteamID, BytesIO *> entry : m_receivedPackets)
-        delete entry.second;
+}
+
+void Client::shutdown()
+{
+    if (!m_thread.joinable())
+        return;
     m_runningCallbacks = false;
-    if (m_thread.joinable())
-        m_thread.join();
+    m_thread.join();
+    if (isConnected()) {
+        BytesIO packet;
+        packet.write((int)PacketLeave);
+        send(m_hostSteamId, packet);
+    }
+    m_hostSteamId.Clear();
+    for (const auto &entry : m_receivedPackets)
+        delete entry.second;
+    m_receivedPackets.clear();
 }
 
 void Client::addPacket(const CSteamID &sender, const BytesIO &packet)
@@ -111,7 +123,13 @@ void Client::connect(CSteamID steamId)
         m_host->stop();
 
     BytesIO packet;
-    packet.write((int)PacketJoin);
+    const int profile = m_game->m_world->networkProtocolVersion();
+    if (profile != PROTOCOL_VERSION) {
+        packet.write((int)PacketWorldProfileJoin);
+        packet.write(profile);
+    } else {
+        packet.write((int)PacketJoin);
+    }
     send(steamId, packet);
     m_lastHostPacketTime = timeGetTime();
     m_hostSteamId = steamId;
@@ -156,10 +174,11 @@ void Client::receive(const CSteamID &sender, BytesIO &packet)
     case PacketInvitation: {
         int version = 0;
         packet.read(version);
-        if (version != PROTOCOL_VERSION) {
+        const int localVersion = m_game->m_world->networkProtocolVersion();
+        if (version != localVersion) {
             BytesIO reply;
             reply.write((int)PacketVersionMismatch);
-            reply.write(PROTOCOL_VERSION);
+            reply.write(localVersion);
             send(sender, reply);
             break;
         }

@@ -4,6 +4,8 @@
 #pragma once
 #include <array>
 #include <list>
+#include <memory>
+#include "cube/HairGradient.h"
 #include <map>
 #include <set>
 #include <string>
@@ -12,6 +14,8 @@
 #include "cube/Fixed.h"
 #include "cube/IntTriple.h"
 #include "cube/Item.h"
+#include "cube/TownQuest.h"
+#include <optional>
 #include "cube/WorldMap.h"
 #include "plasma/Vector.h"
 
@@ -219,6 +223,7 @@ struct CharacterStyle {
 
 // Player-only data: appearance choices, discoveries and collected items.
 struct PlayerData : CharacterStyle {
+    HairGradient hairGradient;
     std::list<Item> knownFormulas;
     // Uses the same key type as knownMissions.
     std::set<std::array<int, 2>> knownFlightPoints;
@@ -240,6 +245,7 @@ struct PlayerData : CharacterStyle {
     std::list<plasma::Vector<2, int>> visitedRegions;
     std::map<unsigned, std::set<std::array<int, 2>>> loreByRealm;
     std::map<long long, std::list<Item>> purchasesByShop;
+    std::vector<TownQuest> townQuests;
     Item usableSpecialItem;
     Item contextItem;         // the renderer calls the Item method on it
     int contextItemCount = 0; // Initially zero; copied with the player data.
@@ -386,6 +392,8 @@ public:
         float revivalPenalty;
         int level; // 1 when constructed; read by the skill getters
         int xp;
+        int progressionLevel =
+            1; // Numeric level. The existing level field retains the game's rarity and artifact rules.
         unsigned char classType;      // read by armor and maxHP
         unsigned char specialization; // maxHP
         plasma::Vector<2, int> region;
@@ -705,7 +713,10 @@ public:
     float tempo();
     // The xp gained in all levels below the current one (10 * 2^((n - 1) / 2) for level n) plus the xp in the current
     // level.
-    int totalXP();
+    long long totalXP();
+    int displayLevel() const { return m_pyroProgression ? m_entityData.progressionLevel : m_entityData.level; }
+    bool awardExperience(int xp);
+    bool m_pyroProgression = false;
     // Zeroes m_artifactSkills, sets the level to 1, then for every artifact in inventory tab 5 adds one level and one
     // point to the skill Item::artifactType selects.
     void updateLevelAndSkills();
@@ -765,11 +776,19 @@ public:
     int m_summonAppearanceMode;       // 1 when constructed
     std::vector<int> m_summonRaces;   // World chooses a random entry for a new creature, defaulting to 37.
     std::set<long long> m_groupMembers;
+    std::optional<plasma::Vector<3, Fixed>> m_travelWaypoint;
     long long m_unusedC18; // zeroed by the constructor and reset; no other access
     std::vector<UnusedVectorRecord> m_unusedRecords;
     AnimationState m_animationState;
     // Opaque record storage.
     PlayerData *m_playerData;
+    Sprite *styledHair(Sprite *source);
+
+private:
+    struct HairMesh;
+    std::unique_ptr<HairMesh> m_hairMesh;
+
+public:
     float m_copiedToPet; // 200.0 when constructed; World::updateTamed copies the owner's to a new pet; nothing reads it
     unsigned char m_unused1534[0xc]; // Not initialised by the constructor; no access in the program.
     unsigned char m_unused1540;      // Initially zero; no other access.

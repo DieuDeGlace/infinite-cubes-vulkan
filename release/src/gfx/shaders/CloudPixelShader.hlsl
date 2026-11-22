@@ -1,6 +1,3 @@
-// The alpha names its cloud shader so (CloudPixelShader.hlsl). ps_4_0, entry point main, no compile
-// flags; CMake with fxc compiles it into gfx/shaders/CloudPixelShader.h
-// (g_cloudPixelShader), byte for byte the original's.
 #include "World.hlsli"
 #include "WorldAtmosphere.hlsli"
 

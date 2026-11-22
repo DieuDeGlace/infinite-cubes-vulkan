@@ -22,8 +22,7 @@ public:
 
     // Draws the settings' names and values.
     virtual void draw();
-    // Places the 30 setting buttons in rows 30 apart (left at x 240, right 15 from the right edge, y 12..432) and
-    // Apply, OK and Cancel 20 above the bottom (left, centre, right).
+    // Places the setting arrows and the Apply, OK and Cancel buttons.
     virtual void resized();
 
     // Setting handlers: Decrease is the left button and Increase the right. Both buttons toggle an on/off setting.
@@ -57,6 +56,12 @@ public:
     void LanguageIncrease();
     void ShowRarityDecrease();
     void ShowRarityIncrease();
+    void ToggleSunShadows();
+    void ToggleGlobalIllumination();
+    void ToggleMovingLeaves();
+    void ToggleBiomeSize();
+    void ToggleAlphaTerrain();
+    void ToggleAlphaLighting();
     void Apply(); // (Game::SetOptions with m_options)
     // Game::SetOptions, then hides the widget.
     void Ok();
@@ -80,6 +85,10 @@ protected:
     plasma::Node *m_vsyncRightButton;
     plasma::Node *m_renderDistanceLeftButton;
     plasma::Node *m_renderDistanceRightButton;
+    plasma::Node *m_shadowsLeftButton;
+    plasma::Node *m_shadowsRightButton;
+    plasma::Node *m_globalIlluminationLeftButton;
+    plasma::Node *m_globalIlluminationRightButton;
     plasma::Node *m_cpuUsageLeftButton;
     plasma::Node *m_cpuUsageRightButton;
     plasma::Node *m_soundFXVolumeLeftButton;
@@ -100,6 +109,14 @@ protected:
     plasma::Node *m_languageRightButton;
     plasma::Node *m_rarityLeftButton;
     plasma::Node *m_rarityRightButton;
+    plasma::Node *m_movingLeavesLeftButton;
+    plasma::Node *m_movingLeavesRightButton;
+    plasma::Node *m_biomeSizeLeftButton;
+    plasma::Node *m_biomeSizeRightButton;
+    plasma::Node *m_alphaTerrainLeftButton;
+    plasma::Node *m_alphaTerrainRightButton;
+    plasma::Node *m_alphaLightingLeftButton;
+    plasma::Node *m_alphaLightingRightButton;
     // Copies of the button template.
     plasma::Node *m_applyButton;
     plasma::Node *m_okButton;

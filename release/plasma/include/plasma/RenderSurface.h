@@ -7,7 +7,7 @@ namespace plasma {
 
 class RenderSurface {
 public:
-    // Requested depth attachment; stored but not read by the D3D11 implementation.
+    // Requested depth attachment; stored but not read by the Vulkan implementation.
     explicit RenderSurface(bool depthAttachment);
     virtual ~RenderSurface();
 
@@ -27,8 +27,8 @@ public:
 protected:
     friend class Widget;           // stores false in m_linearFiltering after creating its surface
     bool m_linearFiltering;        // true at construction
-    Vector<4, float> m_drawColor;  // 1, 1, 1, 1 at construction; D3D11RenderSurface::draw passes it as the colour
-    Vector<4, float> m_clearColor; // 0, 0, 0, 0 at construction; no D3D11 reader (Begin clears to 0)
+    Vector<4, float> m_drawColor;  // 1, 1, 1, 1 at construction; VulkanRenderSurface::draw passes it as the colour
+    Vector<4, float> m_clearColor; // 0, 0, 0, 0 at construction; no Vulkan reader (Begin clears to 0)
     bool m_depthAttachment;        // the constructor's argument
 };
 

@@ -33,8 +33,9 @@ struct ZoneCandidate {
     int distance;
 };
 
-Host::Host(SpriteManager *spriteManager)
-    : m_world(spriteManager),
+Host::Host(SpriteManager *spriteManager, std::shared_ptr<AlphaTerrain> alphaTerrain, bool largerBiomes,
+           bool pyroProgression, bool aquaticEnemies)
+    : m_world(spriteManager, std::move(alphaTerrain), largerBiomes, pyroProgression, aquaticEnemies),
       m_running(true),
       m_localClientConnection(nullptr)
 {
@@ -48,6 +49,11 @@ Host::Host(SpriteManager *spriteManager)
         timeGetTime();
         unsigned int lastSaveTime = timeGetTime();
         while (m_running) {
+            auto work = lockWorldWork();
+            if (!work) {
+                Sleep(5);
+                continue;
+            }
             // The block position of every player, or the destination of one who is flying (ability 156).
             m_world.enterZoneMeshes();
             std::list<std::array<int, 2>> positions;
@@ -174,20 +180,10 @@ Host::Host(SpriteManager *spriteManager)
 
 Host::~Host()
 {
-    m_running = false;
-    std::cout << "[HOST] waiting for generation thread..." << std::endl;
-    m_thread.join();
+    shutdown();
+    delete m_localClientConnection;
     DeleteCriticalSection(&m_receivedPacketsLock);
     DeleteCriticalSection(&m_connectionsLock);
-    for (std::pair<const CSteamID, Connection *> &entry : m_connections) {
-        if (entry.first != g_localSteamId) {
-            int packet = 2;
-            SteamNetworking()->SendP2PPacket(entry.first, &packet, 4, k_EP2PSendReliable, 0);
-        }
-        delete entry.second;
-    }
-    for (std::pair<CSteamID, BytesIO *> entry : m_receivedPackets)
-        delete entry.second;
 }
 
 void Host::addPacket(const CSteamID &sender, const BytesIO &packet)
@@ -331,7 +327,7 @@ void Host::invite(CSteamID steamId)
 {
     BytesIO packet;
     packet.write((int)PacketInvitation);
-    packet.write(PROTOCOL_VERSION);
+    packet.write(m_world.networkProtocolVersion());
     SteamNetworking()->SendP2PPacket(steamId, packet.data(), packet.size(), k_EP2PSendReliable, 0);
     EnterCriticalSection(&m_connectionsLock);
     m_invitations[steamId] = timeGetTime();
@@ -362,7 +358,21 @@ void Host::receive(const CSteamID &sender, BytesIO &packet)
     case PacketVersionMismatch:
         m_invitations.erase(sender);
         break;
-    case PacketJoin: {
+    case PacketJoin:
+    case PacketWorldProfileJoin: {
+        const bool profileJoin = type == PacketWorldProfileJoin;
+        int profile = PROTOCOL_VERSION;
+        if (profileJoin) {
+            profile = 0;
+            packet.read(profile);
+        }
+        const int expected = m_world.networkProtocolVersion();
+        if (profileJoin != (expected != PROTOCOL_VERSION) || profile != expected) {
+            BytesIO reply;
+            reply.write((int)PacketLeave);
+            send(sender, reply);
+            break;
+        }
         // The first unused player id, 1 through 10 (the player limit).
         int freeId = 1;
         while (m_world.creatureByID(freeId)) {
@@ -495,6 +505,16 @@ void Host::send(const CSteamID &steamId, BytesIO &packet)
     }
 }
 
+void Host::shutdown()
+{
+    if (!m_thread.joinable())
+        return;
+    m_running = false;
+    std::cout << "[HOST] waiting for generation thread..." << std::endl;
+    m_thread.join();
+    stop();
+}
+
 void Host::stop()
 {
     EnterCriticalSection(&m_connectionsLock);
@@ -516,8 +536,28 @@ void Host::stop()
         delete entry.second;
     m_receivedPackets.clear();
     LeaveCriticalSection(&m_receivedPacketsLock);
+    m_world.enterZoneMeshes();
     m_world.removeCreatures();
+    m_world.leaveZoneMeshes();
     LeaveCriticalSection(&m_connectionsLock);
+}
+
+std::shared_lock<std::shared_mutex> Host::lockWorldWork()
+{
+    if (m_worldChangePending)
+        return {};
+    std::shared_lock<std::shared_mutex> lock(m_worldWork);
+    if (m_worldChangePending)
+        return {};
+    return lock;
+}
+
+void Host::loadWorld(int seed, const std::string &name)
+{
+    m_world.removeZones();
+    m_world.saveState(m_world.m_state);
+    m_world.m_aiManager.m_states.clear();
+    m_world.init(seed, name);
 }
 
 void Host::uninvite(CSteamID steamId)
@@ -586,7 +626,7 @@ void Host::update(int milliseconds)
             invitation.second = time;
             BytesIO packet;
             packet.write((int)PacketInvitation);
-            packet.write(PROTOCOL_VERSION);
+            packet.write(m_world.networkProtocolVersion());
             SteamNetworking()->SendP2PPacket(invitation.first, packet.data(), packet.size(), k_EP2PSendReliable, 0);
         }
     }

@@ -9,8 +9,8 @@
 #include "cube/Item.h"
 #include "cube/SpriteManager.h"
 #include "cube/World.h"
-#include "gfx/D3D11Renderer.h"
-#include "plasma/D3D11Engine.h"
+#include "gfx/Renderer.h"
+#include "plasma/Engine.h"
 #include "plasma/Display.h"
 #include "plasma/Node.h"
 

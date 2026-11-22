@@ -2,6 +2,8 @@
 // plays a sound and updates the preview creature.
 #pragma once
 #include "cube/widgets/BaseWidget.h"
+#include "cube/HairGradient.h"
+#include <array>
 #include "plasma/Vector.h"
 
 namespace plasma {
@@ -17,14 +19,15 @@ public:
     CharacterStyleWidget(Game *game, plasma::Node *node, plasma::Node *leftButton, plasma::Node *rightButton);
 
     virtual void draw();
-    // Lays out the ten buttons in their rows.
+    // Lays out the arrows for each row.
     virtual void resized();
 
     // Button handlers update race (wrapping 0..7), class (wrapping 0..3) or gender, play a sound and call
     // updateCreature.
     void decreaseClass();
     void increaseClass();
-    void selectHairColor(); // (current = preview)
+    void selectHairColor();
+    void commitHairColors();
     void decreaseFace();
     void increaseFace();
     // Two genders: both buttons toggle.
@@ -57,6 +60,29 @@ public:
     int m_haircut;                      // Haircut index, initially zero; changed by the haircut buttons.
     plasma::Vector<3, unsigned char> m_currentHairColor; // Hair colour selected by selectHairColor.
     plasma::Vector<3, unsigned char> m_previewHairColor; // Hair colour component selected by selectHairColor.
+private:
+    friend class SecondHairWidget;
+    HairGradient m_gradient;
+    plasma::Vector<3, unsigned char> m_previewTipColor {255, 255, 255};
+};
+
+// The second palette has its own panel and hit targets on the creation screen.
+class SecondHairWidget : public BaseWidget {
+public:
+    SecondHairWidget(CharacterStyleWidget &style, plasma::Node *node, plasma::Node *left, plasma::Node *right);
+    void draw() override;
+    void resized() override;
+
+private:
+    CharacterStyleWidget &m_style;
+    std::array<plasma::Node *, 3> m_left, m_right;
+    void selectColor();
+    void toggle();
+    void earlierStart();
+    void laterStart();
+    void narrowerBlend();
+    void widerBlend();
+    void adjustPercent(unsigned char &value, int step);
 };
 
 }

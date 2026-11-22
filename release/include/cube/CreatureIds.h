@@ -833,6 +833,7 @@ enum AppearanceFlag {
     AppearanceFlagFullShininess = 16777216,       // Animation draws equipment using full shine
     AppearanceFlagNoCreatureCollision = 33554432, // World skips mutual creature collision
     AppearanceFlagPromotedResident = 67108864,    // World resident promotion consumed per region; stats +10%, red tint
+    AppearanceFlagAquatic = 134217728,
 };
 
 // inventory-tabs identifiers.

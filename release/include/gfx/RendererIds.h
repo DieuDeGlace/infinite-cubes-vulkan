@@ -30,8 +30,8 @@ enum DepthStencilSlot {
     DepthStencilSlotCount = 3,
 };
 enum BlendSlot {
-    BlendAlpha = 0,     // SRC_ALPHA / INV_SRC_ALPHA (alpha modes, water, ground spots)
-    BlendOpaque = 1,    // no blending (opaque modes, sky)
+    BlendAlpha = 0,     // SRC_ALPHA / INV_SRC_ALPHA (alpha modes, ground spots)
+    BlendOpaque = 1,    // no blending (opaque modes, sky, water)
     BlendDepthOnly = 2, // no blending, colour writes disabled (the "Depth" modes)
     BlendSlotCount = 3,
 };

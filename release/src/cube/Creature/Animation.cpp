@@ -3796,14 +3796,16 @@ void Creature::AnimationState::addSprites(gfx::SpriteBatch &batch, SpriteManager
             color * plasma::Vector<4, float>((float)m_creature->m_entityData.appearance.hairColor[0] / 255.0f,
                                              (float)m_creature->m_entityData.appearance.hairColor[1] / 255.0f,
                                              (float)m_creature->m_entityData.appearance.hairColor[2] / 255.0f, 1.0f);
+        Sprite *hair = m_creature->styledHair(m_hairSprite);
+        if (hair != m_hairSprite)
+            tint = color;
         float hairGlow =
             (m_creature->m_entityData.appearance.appearanceFlags & AppearanceFlagSuppressHairDebris) != 0 ? 1.0f : 0.0f;
         if ((m_creature->m_entityData.appearance.appearanceFlags & AppearanceFlagPetrified) != 0) {
             tint = color * (float)m_creature->m_entityData.appearance.hairColor[1] / 255.0f;
             hairGlow = -1.0f;
         }
-        batch.add(m_hairSprite, m_hairMatrix, tint, alpha, hairGlow, 0.0f, m_creature->m_hitFlash,
-                  depthOffset + 0.0001f);
+        batch.add(hair, m_hairMatrix, tint, alpha, hairGlow, 0.0f, m_creature->m_hitFlash, depthOffset + 0.0001f);
     }
 
     // Draws the first equipment-slot item on the head, using the head transform and hair height. Does not check that
@@ -4124,7 +4126,7 @@ void Creature::AnimationState::addSprites(gfx::SpriteBatch &batch, SpriteManager
     // --- The weapon trails --- Four rows of sixteen points, kept relative to the creature's drawn position: the tip
     // and the base of the right weapon and of the left weapon, newest first. Point 0 of each row is where the weapon's
     // end is now (set with the weapons above); while an attack strikes, each older point follows the one before it,
-    // which leaves a ribbon behind the blade (D3D11Renderer::drawTrails); otherwise the rows collapse onto point 0.
+    // which leaves a ribbon behind the blade (VulkanRenderer::drawTrails); otherwise the rows collapse onto point 0.
     plasma::Vector<3, float> *const rightTip = m_trails[0];
     plasma::Vector<3, float> *const rightBase = m_trails[1];
     plasma::Vector<3, float> *const leftTip = m_trails[2];

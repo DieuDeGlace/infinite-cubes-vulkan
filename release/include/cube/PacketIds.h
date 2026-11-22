@@ -24,6 +24,7 @@ enum PacketId {
     PacketZoneRequest = 15,  // client -> host: a zone (x, y) the client needs (Game::m_requestedZones)
     PacketVersionMismatch =
         24, // client -> host: the invitation's protocol version differs; the host drops the invitation
+    PacketWorldProfileJoin = 25, // client -> host: join with a matching terrain and biome profile
 };
 
 }

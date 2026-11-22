@@ -1,15 +1,17 @@
 // Exceptions for malformed or unreadable PLX streams.
 #pragma once
+#include <exception>
 #include <string>
 
 namespace plasma {
 
-class Exception {
+class Exception : public std::exception {
 public:
     explicit Exception(const std::string &message)
         : m_message(message)
     {}
 
+    const char *what() const noexcept override { return m_message.c_str(); }
     virtual const std::string &getMessage() const { return m_message; }
 
     std::string m_message;

@@ -1,11 +1,13 @@
 // Host runs the server side of a multiplayer session inside the game process. It owns the authoritative World, a
 // generation thread, joined-player connections, invitations and received client packets. Packets for the local Client
-// go through m_localClientConnection; remote packets use Steam P2P. Destruction stops and joins the thread and frees
-// queued packets and connections, but does not delete m_localClientConnection.
+// go through m_localClientConnection; remote packets use Steam P2P. Destruction stops the worker and releases
+// the connections and queues.
 #pragma once
 #include <windows.h>
+#include <atomic>
 #include <list>
 #include <map>
+#include <shared_mutex>
 #include <string>
 #include <thread>
 #include <utility>
@@ -50,6 +52,7 @@ public:
     // The receiver of the packets the host sends to the local player.
     class BaseLocalClientConnection {
     public:
+        virtual ~BaseLocalClientConnection() = default;
         // Delivers the host's packet and sender ID to the local client.
         virtual void send(const CSteamID &sender, const BytesIO &packet) = 0;
     };
@@ -68,7 +71,8 @@ public:
         Method m_method;
     };
 
-    explicit Host(SpriteManager *spriteManager);
+    explicit Host(SpriteManager *spriteManager, std::shared_ptr<AlphaTerrain> alphaTerrain, bool largerBiomes,
+                  bool pyroProgression, bool aquaticEnemies);
     virtual ~Host();
 
     // Queues a copy of a packet received from the local client with its sender (under m_receivedPacketsLock). Called
@@ -89,9 +93,14 @@ public:
     // Sends a packet to a player: through m_localClientConnection for the user's own Steam ID, else through Steam P2P
     // (reliable, channel 0).
     void send(const CSteamID &steamId, BytesIO &packet);
-    // Closes the session: tells every remote player (packet 2), deletes the connections, the invitations and
-    // everything queued, and clears the world.
+    // Closes the current session and clears its creatures. The terrain worker stays available for the next session.
     void stop();
+    // Joins the terrain worker before closing the session. Call after the game workers stop.
+    void shutdown();
+    // A world change waits for the current worker batches to finish.
+    std::shared_lock<std::shared_mutex> lockWorldWork();
+    // The local client has closed the previous session and the world workers are idle.
+    void loadWorld(int seed, const std::string &name);
     // disconnect(), then tells the player (packet 2).
     void uninvite(CSteamID steamId);
     // Runs a host tick, at most 1000 ms: receives client packets, repeats invitations every five seconds, sends entity
@@ -108,9 +117,9 @@ public:
 
     // The host's world.
     World m_world;
-    // Read by the generation thread; cleared by the destructor before joining.
-    volatile bool
-        m_running;        // Initially true; the generation thread tests it and the destructor clears it before joining.
+    std::atomic<bool> m_worldChangePending {false};
+    std::shared_mutex m_worldWork;
+    std::atomic<bool> m_running;
     std::thread m_thread; // World generation thread.
     // Joined players keyed by Steam ID, guarded by m_connectionsLock.
     std::map<CSteamID, Connection *> m_connections;

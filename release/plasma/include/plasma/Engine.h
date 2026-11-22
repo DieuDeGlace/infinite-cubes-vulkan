@@ -1,7 +1,7 @@
 // plasma::Engine (Engine.cpp): the engine base class. It owns every engine object (through ObjectManager), keeps the
 // shapes, widgets, transformations, displays, nodes, textures and fonts in lists, the roots of the node trees ("root",
 // "sources", "fonts"), the font engine, the off-screen surface pool and the input state (pointer, pressed keys,
-// focus). plasma::D3D11Engine is the only derived class in Cube World.
+// focus). plasma::VulkanEngine is the only derived class in Cube World.
 #pragma once
 #include <windows.h>
 #include <iosfwd>
@@ -242,7 +242,7 @@ public:
     void destroyNode(Node *node);
 
     // Renders the root between beginWindowDrawing and endWindowDrawing and returns the render-target switch count. The
-    // argument supplies NodeRenderMode flags; D3D11Renderer passes zero.
+    // argument supplies NodeRenderMode flags; VulkanRenderer passes zero.
     int drawWindow(int mode);
     // Stores the frame time, advances the caret clock and the root.
     bool advance(int milliseconds);
@@ -330,7 +330,7 @@ public:
     int viewportHeight() const { return m_viewportHeight; }
 
 protected:
-    friend class D3D11Drawing;    // Binds m_filterSurface and reads the viewport size during drawing.
+    friend class VulkanDrawing;    // Binds m_filterSurface and reads the viewport size during drawing.
     friend class Texture;         // registers itself in m_texturesById
     friend class Font;            // registers itself in m_fontList and m_fontsById
     friend class SmoothMeshShape; // Draws using the fill, outline and extrusion colours.
@@ -350,7 +350,7 @@ protected:
     std::vector<RenderSurface *> m_renderSurfaces; // the off-screen pool (beginOffscreenDrawing)
     RenderSurface *m_blurSurface;                  // resized by drawWindow, deleted by the destructor
     int m_surfaceDepth;                            // Initially -1.
-    RenderSurface *m_filterSurface;                // D3D11Engine::beginTextDrawing binds it
+    RenderSurface *m_filterSurface;                // VulkanEngine::beginTextDrawing binds it
     std::list<RenderSurface *> m_surfaceStack;
     CRITICAL_SECTION m_lock; // Critical section with spin count 16.
     FT_Library m_freeType;

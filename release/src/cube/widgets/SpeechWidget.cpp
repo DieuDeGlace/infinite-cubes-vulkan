@@ -6,7 +6,7 @@
 #include "cube/Game.h"
 #include "cube/widgets/SpeechWidget.h"
 #include "cube/World.h"
-#include "plasma/D3D11Engine.h"
+#include "plasma/Engine.h"
 #include "plasma/Display.h"
 #include "plasma/Engine.h"
 #include "plasma/Node.h"

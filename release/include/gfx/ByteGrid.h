@@ -83,7 +83,8 @@ namespace cube {
 
 // Computes transparent-block light levels (0..255) over the rectangle and its margin, writes them into light and
 // stores each interior block's level in its first colour byte.
-void computeLight(ZoneNeighborhood &zones, gfx::ByteGrid &light, int x0, int y0, int x1, int y1, int margin);
+void computeLight(ZoneNeighborhood &zones, gfx::ByteGrid &light, int x0, int y0, int x1, int y1, int margin,
+                  bool alphaLighting);
 
 }
 

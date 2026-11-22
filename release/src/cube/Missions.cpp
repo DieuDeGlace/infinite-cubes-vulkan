@@ -57,10 +57,11 @@ Missions::Missions(World *world, const plasma::Vector<2, int> &region)
     // region, and how many there are of each type.
     std::set<IntTriple> places;
     std::map<int, int> counts;
-    for (int x = floorDivide(region[0] * BlocksPerLand - BlocksPerLand, BlocksPerPlace);
-         x <= floorDivide((region[0] + 2) * BlocksPerLand, BlocksPerPlace); x++) {
-        for (int y = floorDivide(region[1] * BlocksPerLand - BlocksPerLand, BlocksPerPlace);
-             y <= floorDivide((region[1] + 2) * BlocksPerLand, BlocksPerPlace); y++) {
+    const int landSpan = world->blocksPerLand();
+    for (int x = floorDivide((region[0] - 1) * landSpan, BlocksPerPlace);
+         x <= floorDivide((region[0] + 2) * landSpan, BlocksPerPlace); x++) {
+        for (int y = floorDivide((region[1] - 1) * landSpan, BlocksPerPlace);
+             y <= floorDivide((region[1] + 2) * landSpan, BlocksPerPlace); y++) {
             int cellX = x;
             int cellY = y;
             if (x != 0 || y != 0) {

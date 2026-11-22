@@ -1,5 +1,5 @@
 // gfx::VertexBuffer: the API-neutral handle of a vertex buffer that gfx::Graphics creates (Graphics.h);
-// gfx::D3D11VertexBuffer (D3D11Graphics.h) is the only implementation. Also gfx::Vertex, the vertex format of every
+// gfx::VulkanVertexBuffer (VulkanGraphics.h) is the only implementation. Also gfx::Vertex, the vertex format of every
 // buffer Graphics creates.
 #pragma once
 #include "plasma/Vector.h"
@@ -29,8 +29,11 @@ struct Vertex {
             this->normal = 5;
     }
 
+    // Added to the face index of a leaf block's faces in terrain meshes, which the world shaders move with the wind.
+    static constexpr unsigned char FoliageFace = 8;
+
     plasma::Vector<3, unsigned char> position; // POSITION x, y, z
-    unsigned char normal;                      // POSITION w, the face index 0..5
+    unsigned char normal;                      // POSITION w, the face index 0..5, plus FoliageFace on leaves
     plasma::Vector<4, unsigned char> color;    // COLOR, RGBA
 };
 

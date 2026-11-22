@@ -5,6 +5,13 @@
 
 namespace cube {
 
+struct ReliefSurface {
+    int stoneDepth = 0;
+    bool grassCap = false;
+
+    bool isStone(int depth) const { return depth > 0 && depth <= stoneDepth; }
+};
+
 class Field {
 public:
     Field();
@@ -59,6 +66,7 @@ public:
     float m_lavaChannels;   // World::lavaChannels
     float m_poisonChannels; // World::poisonChannels
     float m_streetAmount;
+    ReliefSurface m_reliefSurface;
     // Zero after construction; resize lowers it when it grows the column downwards.
     int m_baseZ;
     std::vector<Block> m_blocks;

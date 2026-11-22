@@ -32,6 +32,17 @@ struct Options {
     float mapScale;          // Initially 1.0.
     int musicLoop;           // Initially 0.
     int antiAliasingSamples; // Initially 8.
+    int waterLilies;         // Initially 1.
+    int alphaTerrain;        // Read at startup. Uses its own saves.
+    int largerBiomes;        // Read at startup. Selects 1.5x biome spacing.
+    int pyroProgression;
+    int aquaticEnemies;
+    int alphaLighting; // Selects the lighting used when building terrain meshes.
+    int sunShadows;    // Directional shadows from the world geometry.
+    int rsmGI;         // One bounce of sunlight from nearby surfaces.
+    int movingLeaves;  // Tree leaves sway in the wind.
+    int temporalAA;    // Scene TAA before the HUD.
+    int spatialAA;     // Scene SMAA Ultra.
 };
 
 }

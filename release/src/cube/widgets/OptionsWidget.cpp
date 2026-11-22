@@ -3,10 +3,11 @@
 #include <stdlib.h>
 #include <iostream>
 #include <sstream>
+#include <utility>
 #include "cube/widgets/OptionsWidget.h"
 #include "cube/Game.h"
 #include "cube/World.h"
-#include "plasma/D3D11Engine.h"
+#include "plasma/Engine.h"
 #include "plasma/Display.h"
 #include "plasma/Node.h"
 #include "plasma/Transformation.h"
@@ -14,6 +15,10 @@
 #include "plasma/EditFilter.h"
 
 namespace cube {
+
+namespace {
+constexpr float SettingRowHeight = 28.0f;
+}
 
 OptionsWidget::OptionsWidget(Game *game, plasma::Node *node, plasma::Node *leftButton, plasma::Node *rightButton,
                              plasma::Node *button)
@@ -73,6 +78,36 @@ OptionsWidget::OptionsWidget(Game *game, plasma::Node *node, plasma::Node *leftB
     m_renderDistanceRightButton->setDisplay(rightButton->display()->clone());
     m_renderDistanceRightButton->connectWidget(L"rightbutton", plasma::WIDGET_EVENT_POINTER_PRESSED, this,
                                                &OptionsWidget::RenderDistanceIncrease, true);
+    m_shadowsLeftButton = leftButton->instance(node);
+    m_shadowsLeftButton->setTransformation(leftButton->transformation()->clone());
+    m_shadowsLeftButton->setDisplay(leftButton->display()->clone());
+    m_shadowsLeftButton->connectWidget(L"leftbutton", plasma::WIDGET_EVENT_POINTER_PRESSED, this,
+                                       &OptionsWidget::ToggleSunShadows, true);
+    m_shadowsRightButton = rightButton->instance(node);
+    m_shadowsRightButton->setTransformation(rightButton->transformation()->clone());
+    m_shadowsRightButton->setDisplay(rightButton->display()->clone());
+    m_shadowsRightButton->connectWidget(L"rightbutton", plasma::WIDGET_EVENT_POINTER_PRESSED, this,
+                                        &OptionsWidget::ToggleSunShadows, true);
+    m_globalIlluminationLeftButton = leftButton->instance(node);
+    m_globalIlluminationLeftButton->setTransformation(leftButton->transformation()->clone());
+    m_globalIlluminationLeftButton->setDisplay(leftButton->display()->clone());
+    m_globalIlluminationLeftButton->connectWidget(L"leftbutton", plasma::WIDGET_EVENT_POINTER_PRESSED, this,
+                                                  &OptionsWidget::ToggleGlobalIllumination, true);
+    m_globalIlluminationRightButton = rightButton->instance(node);
+    m_globalIlluminationRightButton->setTransformation(rightButton->transformation()->clone());
+    m_globalIlluminationRightButton->setDisplay(rightButton->display()->clone());
+    m_globalIlluminationRightButton->connectWidget(L"rightbutton", plasma::WIDGET_EVENT_POINTER_PRESSED, this,
+                                                   &OptionsWidget::ToggleGlobalIllumination, true);
+    m_movingLeavesLeftButton = leftButton->instance(node);
+    m_movingLeavesLeftButton->setTransformation(leftButton->transformation()->clone());
+    m_movingLeavesLeftButton->setDisplay(leftButton->display()->clone());
+    m_movingLeavesLeftButton->connectWidget(L"leftbutton", plasma::WIDGET_EVENT_POINTER_PRESSED, this,
+                                            &OptionsWidget::ToggleMovingLeaves, true);
+    m_movingLeavesRightButton = rightButton->instance(node);
+    m_movingLeavesRightButton->setTransformation(rightButton->transformation()->clone());
+    m_movingLeavesRightButton->setDisplay(rightButton->display()->clone());
+    m_movingLeavesRightButton->connectWidget(L"rightbutton", plasma::WIDGET_EVENT_POINTER_PRESSED, this,
+                                             &OptionsWidget::ToggleMovingLeaves, true);
     m_cpuUsageLeftButton = leftButton->instance(node);
     m_cpuUsageLeftButton->setTransformation(leftButton->transformation()->clone());
     m_cpuUsageLeftButton->setDisplay(leftButton->display()->clone());
@@ -173,6 +208,36 @@ OptionsWidget::OptionsWidget(Game *game, plasma::Node *node, plasma::Node *leftB
     m_rarityRightButton->setDisplay(rightButton->display()->clone());
     m_rarityRightButton->connectWidget(L"rightbutton", plasma::WIDGET_EVENT_POINTER_PRESSED, this,
                                        &OptionsWidget::ShowRarityIncrease, true);
+    m_biomeSizeLeftButton = leftButton->instance(node);
+    m_biomeSizeLeftButton->setTransformation(leftButton->transformation()->clone());
+    m_biomeSizeLeftButton->setDisplay(leftButton->display()->clone());
+    m_biomeSizeLeftButton->connectWidget(L"leftbutton", plasma::WIDGET_EVENT_POINTER_PRESSED, this,
+                                         &OptionsWidget::ToggleBiomeSize, true);
+    m_biomeSizeRightButton = rightButton->instance(node);
+    m_biomeSizeRightButton->setTransformation(rightButton->transformation()->clone());
+    m_biomeSizeRightButton->setDisplay(rightButton->display()->clone());
+    m_biomeSizeRightButton->connectWidget(L"rightbutton", plasma::WIDGET_EVENT_POINTER_PRESSED, this,
+                                          &OptionsWidget::ToggleBiomeSize, true);
+    m_alphaTerrainLeftButton = leftButton->instance(node);
+    m_alphaTerrainLeftButton->setTransformation(leftButton->transformation()->clone());
+    m_alphaTerrainLeftButton->setDisplay(leftButton->display()->clone());
+    m_alphaTerrainLeftButton->connectWidget(L"leftbutton", plasma::WIDGET_EVENT_POINTER_PRESSED, this,
+                                            &OptionsWidget::ToggleAlphaTerrain, true);
+    m_alphaTerrainRightButton = rightButton->instance(node);
+    m_alphaTerrainRightButton->setTransformation(rightButton->transformation()->clone());
+    m_alphaTerrainRightButton->setDisplay(rightButton->display()->clone());
+    m_alphaTerrainRightButton->connectWidget(L"rightbutton", plasma::WIDGET_EVENT_POINTER_PRESSED, this,
+                                             &OptionsWidget::ToggleAlphaTerrain, true);
+    m_alphaLightingLeftButton = leftButton->instance(node);
+    m_alphaLightingLeftButton->setTransformation(leftButton->transformation()->clone());
+    m_alphaLightingLeftButton->setDisplay(leftButton->display()->clone());
+    m_alphaLightingLeftButton->connectWidget(L"leftbutton", plasma::WIDGET_EVENT_POINTER_PRESSED, this,
+                                             &OptionsWidget::ToggleAlphaLighting, true);
+    m_alphaLightingRightButton = rightButton->instance(node);
+    m_alphaLightingRightButton->setTransformation(rightButton->transformation()->clone());
+    m_alphaLightingRightButton->setDisplay(rightButton->display()->clone());
+    m_alphaLightingRightButton->connectWidget(L"rightbutton", plasma::WIDGET_EVENT_POINTER_PRESSED, this,
+                                              &OptionsWidget::ToggleAlphaLighting, true);
     m_applyButton = button->clone(node);
     m_okButton = button->clone(node);
     m_cancelButton = button->clone(node);
@@ -203,100 +268,78 @@ void OptionsWidget::draw()
     plasma::Matrix<float> matrix;
     m_node->getMatrix(matrix);
 
-    // Each row: the setting's name at x 15, then its value centred in the space right of x 240.
-    if (m_options.fullscreen)
-        stream << L"Fullscreen";
-    else
-        stream << L"Windowed";
     setTextColor(plasma::Vector<4, float>(1.0f, 1.0f, 1.0f, 1.0f));
     setTextStrokeColor(plasma::Vector<4, float>(0.0f, 0.0f, 0.0f, 1.0f));
     setTextSize(12.0f);
     setTextStrokeRadius(3.0f);
-    setTextFlags(0);
-    renderText(L"Mode", 15.0f, 26.0f);
-    setTextFlags(1 << plasma::TEXT_CENTER);
-    renderText(stream.str(), (getContentWidth() - 250.0f) * 0.5f + 240.0f, 26.0f);
+
+    const float valueX = (getContentWidth() - 250.0f) * 0.5f + 240.0f;
+    float y = 26.0f;
+    const auto drawSetting = [&](const wchar_t *label, const std::wstring &value) {
+        setTextFlags(0);
+        renderText(label, 15.0f, y);
+        setTextFlags(1 << plasma::TEXT_CENTER);
+        renderText(value, valueX, y);
+        y += SettingRowHeight;
+    };
+
+    if (m_options.fullscreen)
+        stream << L"Fullscreen";
+    else
+        stream << L"Windowed";
+    drawSetting(L"Mode", stream.str());
     stream.str(L"");
 
     if (!m_resolutions.empty())
         stream << m_resolutions[m_resolutionIndex].first[0] << L" x " << m_resolutions[m_resolutionIndex].first[1];
-    setTextFlags(0);
-    renderText(L"Resolution", 15.0f, 56.0f);
-    setTextFlags(1 << plasma::TEXT_CENTER);
-    renderText(stream.str(), (getContentWidth() - 250.0f) * 0.5f + 240.0f, 56.0f);
+    drawSetting(L"Resolution", stream.str());
     stream.str(L"");
 
     stream << m_options.refreshRate << L" Hz";
-    setTextFlags(0);
-    renderText(L"Refresh Rate", 15.0f, 86.0f);
-    setTextFlags(1 << plasma::TEXT_CENTER);
-    renderText(stream.str(), (getContentWidth() - 250.0f) * 0.5f + 240.0f, 86.0f);
+    drawSetting(L"Refresh Rate", stream.str());
     stream.str(L"");
 
     if (m_options.vsync <= 0)
         stream << L"OFF";
     else
         stream << L"ON";
-    setTextFlags(0);
-    renderText(L"VSync", 15.0f, 116.0f);
-    setTextFlags(1 << plasma::TEXT_CENTER);
-    renderText(stream.str(), (getContentWidth() - 250.0f) * 0.5f + 240.0f, 116.0f);
+    drawSetting(L"VSync", stream.str());
     stream.str(L"");
 
     stream << m_options.renderDistance << L"%";
-    setTextFlags(0);
-    renderText(L"Render Distance", 15.0f, 146.0f);
-    setTextFlags(1 << plasma::TEXT_CENTER);
-    renderText(stream.str(), (getContentWidth() - 250.0f) * 0.5f + 240.0f, 146.0f);
+    drawSetting(L"Render Distance", stream.str());
     stream.str(L"");
 
+    drawSetting(L"Shadows", m_options.sunShadows ? L"ON" : L"OFF");
+    drawSetting(L"Global Illumination", m_options.rsmGI ? L"ON" : L"OFF");
+    drawSetting(L"Moving Leaves", m_options.movingLeaves ? L"ON" : L"OFF");
+
     stream << (m_options.cpuPerformance ? L"FULL" : L"REDUCED");
-    setTextFlags(0);
-    renderText(L"CPU Usage", 15.0f, 176.0f);
-    setTextFlags(1 << plasma::TEXT_CENTER);
-    renderText(stream.str(), (getContentWidth() - 250.0f) * 0.5f + 240.0f, 176.0f);
+    drawSetting(L"CPU Usage", stream.str());
     stream.str(L"");
 
     stream << m_options.soundVolume << L"%";
-    setTextFlags(0);
-    renderText(L"Sound FX Volume", 15.0f, 206.0f);
-    setTextFlags(1 << plasma::TEXT_CENTER);
-    renderText(stream.str(), (getContentWidth() - 250.0f) * 0.5f + 240.0f, 206.0f);
+    drawSetting(L"Sound FX Volume", stream.str());
     stream.str(L"");
 
     stream << m_options.musicVolume << L"%";
-    setTextFlags(0);
-    renderText(L"Music Volume", 15.0f, 236.0f);
-    setTextFlags(1 << plasma::TEXT_CENTER);
-    renderText(stream.str(), (getContentWidth() - 250.0f) * 0.5f + 240.0f, 236.0f);
+    drawSetting(L"Music Volume", stream.str());
     stream.str(L"");
 
     stream << (m_options.musicLoop ? L"ON" : L"OFF");
-    setTextFlags(0);
-    renderText(L"Loop Music", 15.0f, 266.0f);
-    setTextFlags(1 << plasma::TEXT_CENTER);
-    renderText(stream.str(), (getContentWidth() - 250.0f) * 0.5f + 240.0f, 266.0f);
+    drawSetting(L"Loop Music", stream.str());
     stream.str(L"");
 
     stream << m_options.cameraSpeed << L"%";
-    setTextFlags(0);
-    renderText(L"Camera Speed", 15.0f, 296.0f);
-    setTextFlags(1 << plasma::TEXT_CENTER);
-    renderText(stream.str(), (getContentWidth() - 250.0f) * 0.5f + 240.0f, 296.0f);
+    drawSetting(L"Camera Speed", stream.str());
     stream.str(L"");
 
     stream << m_options.cameraSmoothness << L"%";
-    setTextFlags(0);
-    renderText(L"Camera Smoothness", 15.0f, 326.0f);
-    setTextFlags(1 << plasma::TEXT_CENTER);
-    renderText(stream.str(), (getContentWidth() - 250.0f) * 0.5f + 240.0f, 326.0f);
+    drawSetting(L"Camera Smoothness", stream.str());
     stream.str(L"");
 
     stream << (m_options.invertY ? "Yes" : "No");
-    setTextFlags(0);
-    renderText(L"Invert Y Axis", 15.0f, 356.0f);
-    setTextFlags(1 << plasma::TEXT_CENTER);
-    renderText(stream.str(), (getContentWidth() - 250.0f) * 0.5f + 240.0f, 356.0f);
+    drawSetting(L"Invert Y Axis", stream.str());
     stream.str(L"");
 
     // The minimum time step in ms shown as frames per second.
@@ -304,27 +347,24 @@ void OptionsWidget::draw()
         stream << "none";
     else
         stream << 1000 / m_options.minTimeStep << " fps";
-    setTextFlags(0);
-    renderText(L"FPS Limit", 15.0f, 386.0f);
-    setTextFlags(1 << plasma::TEXT_CENTER);
-    renderText(stream.str(), (getContentWidth() - 250.0f) * 0.5f + 240.0f, 386.0f);
+    drawSetting(L"FPS Limit", stream.str());
     stream.str(L"");
 
     stream << m_options.language;
-    setTextFlags(0);
-    renderText(L"Language", 15.0f, 416.0f);
-    setTextFlags(1 << plasma::TEXT_CENTER);
-    renderText(stream.str(), (getContentWidth() - 250.0f) * 0.5f + 240.0f, 416.0f);
+    drawSetting(L"Language", stream.str());
     stream.str(L"");
 
     if (m_options.showRarity)
         stream << "as stars";
     else
         stream << "color coded";
-    setTextFlags(0);
-    renderText(L"Rarity", 15.0f, 446.0f);
-    setTextFlags(1 << plasma::TEXT_CENTER);
-    renderText(stream.str(), (getContentWidth() - 250.0f) * 0.5f + 240.0f, 446.0f);
+    drawSetting(L"Rarity", stream.str());
+
+    drawSetting(L"Biome Size (restart)", m_options.largerBiomes ? L"1.5x" : L"1.0x");
+    // The world is built with its terrain at the start, and Alpha terrain keeps saves of its own.
+    drawSetting(L"Alpha Terrain (restart)", m_options.alphaTerrain ? L"ON" : L"OFF");
+    // Alpha lighting is baked into the terrain meshes when they are built, so it applies at the next start.
+    drawSetting(L"Alpha Lighting (restart)", m_options.alphaLighting ? L"ON" : L"OFF");
 
     // The setting button under the pointer loses its red.
     m_modeLeftButton->display()->m_fillColor = m_modeLeftButton->widget()->isPointerOver()
@@ -417,6 +457,14 @@ void OptionsWidget::draw()
     m_rarityRightButton->display()->m_fillColor = m_rarityRightButton->widget()->isPointerOver()
                                                       ? plasma::Vector<4, float>(0.0f, 1.0f, 1.0f, 1.0f)
                                                       : plasma::Vector<4, float>(1.0f, 1.0f, 1.0f, 1.0f);
+    for (auto *button :
+         {m_globalIlluminationLeftButton, m_globalIlluminationRightButton, m_movingLeavesLeftButton,
+          m_movingLeavesRightButton, m_biomeSizeLeftButton, m_biomeSizeRightButton, m_alphaTerrainLeftButton,
+          m_alphaTerrainRightButton, m_alphaLightingLeftButton, m_alphaLightingRightButton}) {
+        button->display()->m_fillColor = button->widget()->isPointerOver()
+                                             ? plasma::Vector<4, float>(0.0f, 1.0f, 1.0f, 1.0f)
+                                             : plasma::Vector<4, float>(1.0f, 1.0f, 1.0f, 1.0f);
+    }
 }
 
 void OptionsWidget::RefreshRateDecrease()
@@ -560,6 +608,12 @@ void OptionsWidget::MusicVolumeIncrease()
 // Hides the dialog.
 void OptionsWidget::cancel()
 {
+    m_options.sunShadows = m_game->m_options.sunShadows;
+    m_options.rsmGI = m_game->m_options.rsmGI;
+    m_options.movingLeaves = m_game->m_options.movingLeaves;
+    m_options.largerBiomes = m_game->m_options.largerBiomes;
+    m_options.alphaTerrain = m_game->m_options.alphaTerrain;
+    m_options.alphaLighting = m_game->m_options.alphaLighting;
     m_node->display()->m_visibility.value() = 0;
 }
 
@@ -585,81 +639,35 @@ void OptionsWidget::RenderDistanceIncrease()
 
 void OptionsWidget::resized()
 {
-    // Rows 30 apart from y 12: left buttons at x 240, right buttons 15 from the right edge.
-    m_modeLeftButton->widget()->moveTo(240.0f, 12.0f, true);
-    {
-        plasma::Widget *button = m_modeRightButton->widget();
-        button->moveTo(viewWidth() - button->viewWidth() - 15.0f, 12.0f, true);
-    }
-    m_resolutionLeftButton->widget()->moveTo(240.0f, 42.0f, true);
-    {
-        plasma::Widget *button = m_resolutionRightButton->widget();
-        button->moveTo(viewWidth() - button->viewWidth() - 15.0f, 42.0f, true);
-    }
-    m_refreshRateLeftButton->widget()->moveTo(240.0f, 72.0f, true);
-    {
-        plasma::Widget *button = m_refreshRateRightButton->widget();
-        button->moveTo(viewWidth() - button->viewWidth() - 15.0f, 72.0f, true);
-    }
-    m_vsyncLeftButton->widget()->moveTo(240.0f, 102.0f, true);
-    {
-        plasma::Widget *button = m_vsyncRightButton->widget();
-        button->moveTo(viewWidth() - button->viewWidth() - 15.0f, 102.0f, true);
-    }
-    m_renderDistanceLeftButton->widget()->moveTo(240.0f, 132.0f, true);
-    {
-        plasma::Widget *button = m_renderDistanceRightButton->widget();
-        button->moveTo(viewWidth() - button->viewWidth() - 15.0f, 132.0f, true);
-    }
-    m_cpuUsageLeftButton->widget()->moveTo(240.0f, 162.0f, true);
-    {
-        plasma::Widget *button = m_cpuUsageRightButton->widget();
-        button->moveTo(viewWidth() - button->viewWidth() - 15.0f, 162.0f, true);
-    }
-    m_soundFXVolumeLeftButton->widget()->moveTo(240.0f, 192.0f, true);
-    {
-        plasma::Widget *button = m_soundFXVolumeRightButton->widget();
-        button->moveTo(viewWidth() - button->viewWidth() - 15.0f, 192.0f, true);
-    }
-    m_musicVolumeLeftButton->widget()->moveTo(240.0f, 222.0f, true);
-    {
-        plasma::Widget *button = m_musicVolumeRightButton->widget();
-        button->moveTo(viewWidth() - button->viewWidth() - 15.0f, 222.0f, true);
-    }
-    m_loopMusicLeftButton->widget()->moveTo(240.0f, 252.0f, true);
-    {
-        plasma::Widget *button = m_loopMusicRightButton->widget();
-        button->moveTo(viewWidth() - button->viewWidth() - 15.0f, 252.0f, true);
-    }
-    m_cameraSpeedLeftButton->widget()->moveTo(240.0f, 282.0f, true);
-    {
-        plasma::Widget *button = m_cameraSpeedRightButton->widget();
-        button->moveTo(viewWidth() - button->viewWidth() - 15.0f, 282.0f, true);
-    }
-    m_cameraSmoothnessLeftButton->widget()->moveTo(240.0f, 312.0f, true);
-    {
-        plasma::Widget *button = m_cameraSmoothnessRightButton->widget();
-        button->moveTo(viewWidth() - button->viewWidth() - 15.0f, 312.0f, true);
-    }
-    m_invertYAxisLeftButton->widget()->moveTo(240.0f, 342.0f, true);
-    {
-        plasma::Widget *button = m_invertYAxisRightButton->widget();
-        button->moveTo(viewWidth() - button->viewWidth() - 15.0f, 342.0f, true);
-    }
-    m_fpsLimitLeftButton->widget()->moveTo(240.0f, 372.0f, true);
-    {
-        plasma::Widget *button = m_fpsLimitRightButton->widget();
-        button->moveTo(viewWidth() - button->viewWidth() - 15.0f, 372.0f, true);
-    }
-    m_languageLeftButton->widget()->moveTo(240.0f, 402.0f, true);
-    {
-        plasma::Widget *button = m_languageRightButton->widget();
-        button->moveTo(viewWidth() - button->viewWidth() - 15.0f, 402.0f, true);
-    }
-    m_rarityLeftButton->widget()->moveTo(240.0f, 432.0f, true);
-    {
-        plasma::Widget *button = m_rarityRightButton->widget();
-        button->moveTo(viewWidth() - button->viewWidth() - 15.0f, 432.0f, true);
+    const std::pair<plasma::Node *, plasma::Node *> arrows[] = {
+        {m_modeLeftButton, m_modeRightButton},
+        {m_resolutionLeftButton, m_resolutionRightButton},
+        {m_refreshRateLeftButton, m_refreshRateRightButton},
+        {m_vsyncLeftButton, m_vsyncRightButton},
+        {m_renderDistanceLeftButton, m_renderDistanceRightButton},
+        {m_shadowsLeftButton, m_shadowsRightButton},
+        {m_globalIlluminationLeftButton, m_globalIlluminationRightButton},
+        {m_movingLeavesLeftButton, m_movingLeavesRightButton},
+        {m_cpuUsageLeftButton, m_cpuUsageRightButton},
+        {m_soundFXVolumeLeftButton, m_soundFXVolumeRightButton},
+        {m_musicVolumeLeftButton, m_musicVolumeRightButton},
+        {m_loopMusicLeftButton, m_loopMusicRightButton},
+        {m_cameraSpeedLeftButton, m_cameraSpeedRightButton},
+        {m_cameraSmoothnessLeftButton, m_cameraSmoothnessRightButton},
+        {m_invertYAxisLeftButton, m_invertYAxisRightButton},
+        {m_fpsLimitLeftButton, m_fpsLimitRightButton},
+        {m_languageLeftButton, m_languageRightButton},
+        {m_rarityLeftButton, m_rarityRightButton},
+        {m_biomeSizeLeftButton, m_biomeSizeRightButton},
+        {m_alphaTerrainLeftButton, m_alphaTerrainRightButton},
+        {m_alphaLightingLeftButton, m_alphaLightingRightButton},
+    };
+    float rowY = 12.0f;
+    for (const auto &[left, right] : arrows) {
+        left->widget()->moveTo(240.0f, rowY, true);
+        auto *button = right->widget();
+        button->moveTo(viewWidth() - button->viewWidth() - 15.0f, rowY, true);
+        rowY += SettingRowHeight;
     }
     // Apply, OK and Cancel 20 above the bottom: left, centred, right.
     {
@@ -762,6 +770,36 @@ void OptionsWidget::VSyncDecrease()
 void OptionsWidget::VSyncIncrease()
 {
     m_options.vsync = !m_options.vsync;
+}
+
+void OptionsWidget::ToggleSunShadows()
+{
+    m_options.sunShadows = !m_options.sunShadows;
+}
+
+void OptionsWidget::ToggleGlobalIllumination()
+{
+    m_options.rsmGI = !m_options.rsmGI;
+}
+
+void OptionsWidget::ToggleMovingLeaves()
+{
+    m_options.movingLeaves = !m_options.movingLeaves;
+}
+
+void OptionsWidget::ToggleBiomeSize()
+{
+    m_options.largerBiomes = !m_options.largerBiomes;
+}
+
+void OptionsWidget::ToggleAlphaTerrain()
+{
+    m_options.alphaTerrain = !m_options.alphaTerrain;
+}
+
+void OptionsWidget::ToggleAlphaLighting()
+{
+    m_options.alphaLighting = !m_options.alphaLighting;
 }
 
 void OptionsWidget::setOptions(const Options &options)

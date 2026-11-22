@@ -214,6 +214,7 @@ public:
     // random type of the group at a random position of that kind, with a rider for race 270, and for size 8 a camp of
     // a fire and up to five more static entities.
     void addSpawnGroup(int cellX, int cellY, bool special);
+    void addAquaticResidents();
     // The position of the list of (cellX, cellY, kind) in m_positionsByKind that is nearest to the centre of that
     // 16-block cell, or randomPosition's result when there is none.
     plasma::Vector<3, Fixed> choosePosition(int cellX, int cellY, int kind);

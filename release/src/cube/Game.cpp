@@ -14,6 +14,7 @@
 #include <algorithm>
 #include <array>
 #include <iostream>
+#include <mutex>
 #include <sstream>
 
 #include <zlib.h>
@@ -52,10 +53,10 @@
 #include "cube/World.h"
 #include "cube/WorldMap.h"
 #include "cube/WorldInfo.h"
-#include "gfx/D3D11Renderer.h"
+#include "gfx/Renderer.h"
 #include "gfx/IndexBuffer.h"
 #include "gfx/VertexBuffer.h"
-#include "plasma/D3D11Engine.h"
+#include "plasma/Engine.h"
 #include "plasma/Display.h"
 #include "plasma/Matrix.h"
 #include "plasma/Node.h"
@@ -128,22 +129,48 @@ static inline int squaredDistanceToZone(int x, int y, int zoneX, int zoneY)
 
 struct NearbyZone {
     Zone *zone;
-    int squaredDistance;             // in zones, from the player's zone
-    plasma::Vector<2, int> position; // the zone's coordinates
+    int squaredDistance; // in zones, from the player's zone
 };
+
+class ZoneMeshLock {
+public:
+    explicit ZoneMeshLock(World &world)
+        : m_world(world)
+    {
+        m_world.enterZoneMeshes();
+    }
+    ~ZoneMeshLock() { m_world.leaveZoneMeshes(); }
+    ZoneMeshLock(const ZoneMeshLock &) = delete;
+    ZoneMeshLock &operator=(const ZoneMeshLock &) = delete;
+
+private:
+    World &m_world;
+};
+
+static void configureWorldWorker(int performance, int &previousPerformance)
+{
+    if (performance == previousPerformance)
+        return;
+    if (previousPerformance >= 0)
+        Concurrency::CurrentScheduler::Detach();
+
+    const int priority = performance != 0 ? THREAD_PRIORITY_NORMAL : THREAD_PRIORITY_BELOW_NORMAL;
+    SetThreadPriority(GetCurrentThread(), priority);
+    Concurrency::SchedulerPolicy policy;
+    policy.SetConcurrencyLimits(1, performance != 0 ? 8 : 4);
+    policy.SetPolicyValue(Concurrency::ContextPriority, priority);
+    Concurrency::CurrentScheduler::Create(policy);
+    previousPerformance = performance;
+}
 
 // A draw flag (RenderFlagDebugCreatureBlocks) nothing in the examined code sets; its partner s_debugDrawOnlyPlayer is
 // with the debug switches before handleButtonDown.
 static bool s_debugDrawCreatureBlocks;
 
-// Set while the threads should idle (the map, chunk and generation threads sleep 100 ms per round while it is set). No
-// writer was found.
-static bool s_pauseThreads;
-
 // Builds the game around WinMain's world, map, renderer, engine and audio: loads the bindings, the sounds, the saved
 // characters and the interface, creates the local player ("Wollay", a level 1 warrior, replaced by the character of
 // the saved slot when there is one) and starts the chunk, generation, host, map, AI and music threads.
-Game::Game(World *world, WorldMap *worldMap, gfx::D3D11Renderer *renderer, plasma::D3D11Engine *engine, Audio *audio,
+Game::Game(World *world, WorldMap *worldMap, gfx::Renderer *renderer, plasma::Engine *engine, Audio *audio,
            const Options *options, const std::vector<ResolutionInfo> *displayModes)
     : m_world(world),
       m_worldMap(worldMap),
@@ -151,7 +178,8 @@ Game::Game(World *world, WorldMap *worldMap, gfx::D3D11Renderer *renderer, plasm
       m_engine(engine),
       m_audio(audio),
       m_interface(this),
-      m_host(m_world->m_spriteManager),
+      m_host(m_world->m_spriteManager, m_world->m_alphaTerrain, m_world->m_largerBiomes, m_world->m_pyroProgression,
+             m_world->m_aquaticEnemies),
       m_client(this),
       m_currentWorld(0),
       m_gamepadActive(false),
@@ -209,13 +237,14 @@ Game::Game(World *world, WorldMap *worldMap, gfx::D3D11Renderer *renderer, plasm
     InitializeCriticalSectionAndSpinCount(&m_characterCriticalSection, 16);
     m_controls.load();
     m_world->init(m_seed, m_worldName);
+    m_renderer->setMovingLeaves(m_options.movingLeaves != 0);
     std::cout << "preload sounds" << std::endl;
     for (int i = 0; i < 125; i++) {
         soundId(i);
     }
     memset(m_keyStates, 0, sizeof(m_keyStates));
     std::cout << "load characters" << std::endl;
-    m_charactersDatabase.open("Save/characters.db");
+    m_charactersDatabase.open(std::string(m_world->saveDirectory()) + "/characters.db");
     BytesIO data;
     if (m_charactersDatabase.read("num", data)) {
         int count = 0;
@@ -274,10 +303,11 @@ Game::Game(World *world, WorldMap *worldMap, gfx::D3D11Renderer *renderer, plasm
     // The chunk thread: unloads far zones and rebuilds the meshes of the loaded zones around the player, nearest
     // first.
     m_chunkThread = std::thread([this] {
-        int performance = 1;
+        int performance = -1;
         while (m_running) {
-            if (s_pauseThreads) {
-                Sleep(100);
+            auto work = m_host.lockWorldWork();
+            if (!work) {
+                Sleep(5);
                 continue;
             }
             m_world->enterZoneMeshes();
@@ -290,129 +320,100 @@ Game::Game(World *world, WorldMap *worldMap, gfx::D3D11Renderer *renderer, plasm
                 zoneY = zone[1];
                 zoneX = zone[0];
             }
-            if (performance != m_options.cpuPerformance) {
-                performance = m_options.cpuPerformance;
-                int priority = performance != 0 ? THREAD_PRIORITY_NORMAL : THREAD_PRIORITY_BELOW_NORMAL;
-                SetThreadPriority(GetCurrentThread(), priority);
-                Concurrency::SchedulerPolicy policy;
-                policy.SetConcurrencyLimits(1, performance != 0 ? 8 : 4);
-                policy.SetPolicyValue(Concurrency::ContextPriority, priority);
-                Concurrency::CurrentScheduler::Create(policy);
-            }
-            m_world->leaveZoneMeshes();
+            const int cpuPerformance = m_options.cpuPerformance != 0 ? 1 : 0;
             int radius = (std::max)(3, 30 * m_options.renderDistance / 100);
+            // Publish the player's mesh before building the surrounding scene during a world load.
+            const int meshRadius = m_waitingForTerrain ? 0 : radius;
+            m_world->leaveZoneMeshes();
+            configureWorldWorker(cpuPerformance, performance);
+            const plasma::Vector<2, int> center(zoneX, zoneY);
             for (int i = 0; i < 8; i++) {
-                m_world->removeFarZone(radius + 1);
+                if (!m_world->removeFarZone(center, radius + 1))
+                    break;
             }
             // The loaded zones within the radius, with their squared distance in zones.
             std::vector<NearbyZone> entries;
-            for (int x = zoneX - radius; x <= zoneX + radius; x++) {
-                for (int y = zoneY - radius; y <= zoneY + radius; y++) {
-                    Sleep(0);
-                    m_world->enterZones();
+            m_world->enterZoneMeshes();
+            for (int x = zoneX - meshRadius; x <= zoneX + meshRadius; x++) {
+                for (int y = zoneY - meshRadius; y <= zoneY + meshRadius; y++) {
                     Zone *zone = m_world->zone(x, y);
-                    m_world->leaveZones();
                     if (zone) {
                         NearbyZone entry;
                         entry.zone = zone;
                         entry.squaredDistance = (y - zoneY) * (y - zoneY) + (x - zoneX) * (x - zoneX);
-                        entry.position = plasma::Vector<2, int>(x, y);
                         entries.push_back(entry);
                     }
                 }
             }
+            m_world->leaveZoneMeshes();
             std::sort(entries.begin(), entries.end(),
                       [](const NearbyZone &a, const NearbyZone &b) { return a.squaredDistance < b.squaredDistance; });
             // The zones to rebuild this round, nearest first: those without a mesh or with a changed one that the
             // renderer can mesh, at most eight. Once the meshes counted so far exceed the budget of triangles for the
             // radius, only zones that already have a mesh are still considered.
             long long triangles = 0;
-            // The radius is read through std::max's reference after the lock is taken.
-            const int &budgetRadius = (std::max)(3, 30 * m_options.renderDistance / 100);
+            const long long budget = (long long)((float)((long long)radius * radius * 98304) * 0.8f * 0.8f);
+            std::vector<Zone *> remeshed;
             m_world->enterZoneMeshes();
-            long long budget = (long long)((float)((long long)budgetRadius * budgetRadius * 98304) * 0.8f * 0.8f);
-            m_world->leaveZoneMeshes();
-            std::vector<plasma::Vector<2, int>> remeshed;
-            for (std::vector<NearbyZone>::iterator it = entries.begin(); it != entries.end(); ++it) {
-                if (triangles > budget && it->zone->m_chunk.triangleCount == 0) {
+            for (const NearbyZone &entry : entries) {
+                gfx::Chunk &chunk = entry.zone->m_chunk;
+                if (triangles > budget && !chunk.meshReady) {
                     continue;
                 }
-                if ((it->zone->m_chunk.triangleCount == 0 || it->zone->m_chunk.needsRemesh) &&
-                    m_renderer->canMesh(it->position[0], it->position[1]) && (int)remeshed.size() < 8) {
-                    remeshed.push_back(it->position);
+                const auto &position = entry.zone->m_position;
+                if ((!chunk.meshReady || chunk.needsRemesh) && m_renderer->canMesh(position[0], position[1])) {
+                    chunk.needsRemesh = false;
+                    remeshed.push_back(entry.zone);
+                    if (remeshed.size() == 8)
+                        break;
                 }
-                triangles += it->zone->m_chunk.triangleCount;
+                triangles += chunk.triangleCount;
             }
-            Concurrency::parallel_for_each(
-                remeshed.begin(), remeshed.end(),
-                [this](const plasma::Vector<2, int> &position) { m_renderer->updateChunk(position[0], position[1]); });
-            // The new buffers are prepared outside the lock.
-            for (std::vector<plasma::Vector<2, int>>::iterator it = remeshed.begin(); it != remeshed.end(); ++it) {
+            m_world->leaveZoneMeshes();
+            if (remeshed.empty()) {
+                work.unlock();
+                Sleep(5);
+                continue;
+            }
+            Concurrency::parallel_for_each(remeshed.begin(), remeshed.end(),
+                                           [this](Zone *zone) { m_renderer->updateChunk(*zone); });
+            for (Zone *zone : remeshed) {
                 Sleep(0);
-                Zone *zone = m_world->zone((*it)[0], (*it)[1]);
-                if (zone && zone->m_chunk.newChunkBuffers.size() != 0) {
-                    for (gfx::ChunkBuffer *buffer : zone->m_chunk.newChunkBuffers) {
-                        if (buffer->indexBuffers[gfx::ChunkPassSolid]) {
-                            buffer->indexBuffers[gfx::ChunkPassSolid]->prepare();
-                        }
-                        if (buffer->vertexBuffer) {
-                            buffer->vertexBuffer->prepare();
-                        }
-                        if (buffer->indexBuffers[gfx::ChunkPassWater]) {
-                            buffer->indexBuffers[gfx::ChunkPassWater]->prepare();
-                        }
-                        if (buffer->indexBuffers[gfx::ChunkPassLava]) {
-                            buffer->indexBuffers[gfx::ChunkPassLava]->prepare();
-                        }
+                gfx::Chunk &chunk = zone->m_chunk;
+                for (gfx::ChunkBuffer *buffer : chunk.newChunkBuffers) {
+                    if (buffer->vertexBuffer)
+                        buffer->vertexBuffer->prepare();
+                    for (auto *indexBuffer : buffer->indexBuffers) {
+                        if (indexBuffer)
+                            indexBuffer->prepare();
                     }
                 }
-            }
-            // The new buffers replace the drawn ones while the zone meshes are held; the old ones are deleted
-            // afterwards.
-            for (std::vector<plasma::Vector<2, int>>::iterator it = remeshed.begin(); it != remeshed.end(); ++it) {
-                Zone *zone = m_world->zone((*it)[0], (*it)[1]);
-                if (zone && zone->m_chunk.newChunkBuffers.size() != 0) {
-                    std::list<gfx::ChunkBuffer *> oldBuffers(zone->m_chunk.chunkBuffers);
-                    m_world->enterZoneMeshes();
-                    zone->m_chunk.chunkBuffers = zone->m_chunk.newChunkBuffers;
-                    m_world->leaveZoneMeshes();
-                    Sleep(0);
-                    for (gfx::ChunkBuffer *buffer : oldBuffers) {
-                        delete buffer;
-                    }
-                    zone->m_chunk.newChunkBuffers.clear();
-                }
+                // Publish completed empty meshes too, or they keep the view distance capped.
+                m_world->enterZoneMeshes();
+                chunk.chunkBuffers.swap(chunk.newChunkBuffers);
+                chunk.meshReady = true;
+                m_world->leaveZoneMeshes();
+                for (gfx::ChunkBuffer *buffer : chunk.newChunkBuffers)
+                    delete buffer;
+                chunk.newChunkBuffers.clear();
             }
         }
-        m_world->removeZones();
+        if (performance >= 0)
+            Concurrency::CurrentScheduler::Detach();
     });
-    // The generation thread: generates the missing zones around the player, nearest first and at most four at a time,
-    // and saves the character once a minute and at the end.
+    // The generation thread loads up to four missing zones at a time, prioritizing the spawn neighborhood while
+    // loading. It also saves the character once a minute and at the end.
     m_generationThread = std::thread([this] {
-        unsigned int lastSecond = timeGetTime();
         unsigned int lastSave = timeGetTime();
-        timeGetTime();
-        SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_BELOW_NORMAL);
-        Concurrency::SchedulerPolicy policy;
-        policy.SetConcurrencyLimits(1, 4);
-        policy.SetPolicyValue(Concurrency::ContextPriority, THREAD_PRIORITY_BELOW_NORMAL);
-        Concurrency::CurrentScheduler::Create(policy);
-        int performance = 1;
+        int performance = -1;
         while (m_running) {
-            if (s_pauseThreads) {
-                Sleep(100);
+            auto work = m_host.lockWorldWork();
+            if (!work) {
+                Sleep(5);
                 continue;
             }
             m_world->enterZoneMeshes();
-            if (performance != m_options.cpuPerformance) {
-                performance = m_options.cpuPerformance;
-                int priority = performance != 0 ? THREAD_PRIORITY_NORMAL : THREAD_PRIORITY_BELOW_NORMAL;
-                SetThreadPriority(GetCurrentThread(), priority);
-                Concurrency::SchedulerPolicy newPolicy;
-                newPolicy.SetConcurrencyLimits(1, performance != 0 ? 8 : 4);
-                newPolicy.SetPolicyValue(Concurrency::ContextPriority, priority);
-                Concurrency::CurrentScheduler::Create(newPolicy);
-            }
+            const int cpuPerformance = m_options.cpuPerformance != 0 ? 1 : 0;
             Creature *player = m_world->m_localCreature;
             plasma::Vector<2, int> block((int)player->m_entityData.position[0], (int)player->m_entityData.position[1]);
             if (player->m_entityData.currentAbility == AbilityEagleFlight) {
@@ -421,14 +422,14 @@ Game::Game(World *world, WorldMap *worldMap, gfx::D3D11Renderer *renderer, plasm
             int x = block[0];
             int y = block[1];
             int radius = (std::max)(BlocksPerZone, 1920 * m_options.renderDistance / 100);
+            const bool loading = m_waitingForTerrain;
             m_world->leaveZoneMeshes();
+            configureWorldWorker(cpuPerformance, performance);
             unsigned int now = timeGetTime();
-            if (now - lastSecond > 1000) {
-                lastSecond = now;
-            }
             struct SortedZone {
                 std::array<int, 2> zone;
                 int distance;
+                bool spawnNeighbor;
             };
             std::vector<SortedZone> missing;
             int minX = floorDivide(x - radius, BlocksPerZone);
@@ -438,6 +439,7 @@ Game::Game(World *world, WorldMap *worldMap, gfx::D3D11Renderer *renderer, plasm
             int centerX = floorDivide(x, BlocksPerZone);
             int centerY = floorDivide(y, BlocksPerZone);
             int zoneRadius = radius / BlocksPerZone + 1;
+            m_world->enterZoneMeshes();
             for (int zoneX = minX; zoneX <= maxX; zoneX++) {
                 for (int zoneY = minY; zoneY <= maxY; zoneY++) {
                     if (m_world->zone(zoneX, zoneY)) {
@@ -447,16 +449,22 @@ Game::Game(World *world, WorldMap *worldMap, gfx::D3D11Renderer *renderer, plasm
                     double offsetY = zoneY - centerY;
                     if (offsetX * offsetX + offsetY * offsetY <= zoneRadius * zoneRadius) {
                         int distance = squaredDistanceToZone(x, y, zoneX, zoneY);
-                        SortedZone sorted = {{{zoneX, zoneY}}, distance};
+                        // Meshing the player's zone needs all eight neighbors.
+                        const bool spawnNeighbor = loading && std::abs(offsetX) <= 1 && std::abs(offsetY) <= 1;
+                        SortedZone sorted = {{{zoneX, zoneY}}, distance, spawnNeighbor};
                         missing.push_back(sorted);
                     }
                 }
             }
+            m_world->leaveZoneMeshes();
             if (missing.empty()) {
                 Sleep(5);
             } else {
-                std::sort(missing.begin(), missing.end(),
-                          [](const SortedZone &a, const SortedZone &b) { return a.distance < b.distance; });
+                std::sort(missing.begin(), missing.end(), [](const SortedZone &a, const SortedZone &b) {
+                    if (a.spawnNeighbor != b.spawnNeighbor)
+                        return a.spawnNeighbor;
+                    return a.distance < b.distance;
+                });
                 if (missing.size() > 4) {
                     missing.resize(4);
                 }
@@ -472,6 +480,8 @@ Game::Game(World *world, WorldMap *worldMap, gfx::D3D11Renderer *renderer, plasm
                 lastSave = now;
             }
         }
+        if (performance >= 0)
+            Concurrency::CurrentScheduler::Detach();
         if (!m_interface.m_characterSelection.m_node->isVisible() && !m_interface.m_startMenuNode->isVisible() &&
             !m_interface.m_characterCreationNode->isVisible()) {
             saveCharacter();
@@ -483,40 +493,40 @@ Game::Game(World *world, WorldMap *worldMap, gfx::D3D11Renderer *renderer, plasm
     m_hostThread = std::thread([this] {
         unsigned int last = timeGetTime();
         while (m_running) {
-            if (m_client.isConnected()) {
-                Sleep(33);
-            } else {
-                unsigned int now = timeGetTime();
-                m_host.update(now - last);
-                unsigned int after = timeGetTime();
-                if (after - now < 32) {
-                    Sleep(now - after + 32);
-                }
-                last = now;
+            unsigned int now = timeGetTime();
+            {
+                auto work = m_host.lockWorldWork();
+                if (work && !m_client.isConnected())
+                    m_host.update(now - last);
             }
+            last = now;
+            unsigned int elapsed = timeGetTime() - now;
+            if (elapsed < 32)
+                Sleep(32 - elapsed);
         }
-        m_host.stop();
     });
     // The map thread: updates the map around the map position at the map zoom every 10 ms and cleans it up every five
     // seconds.
     m_mapThread = std::thread([this] {
         unsigned int last = timeGetTime();
         while (m_running) {
-            if (s_pauseThreads) {
-                Sleep(100);
-            } else {
-                m_world->enterZoneMeshes();
-                plasma::Vector<3, Fixed> position = m_mapPosition;
-                int zoom = m_mapZoom;
-                m_world->leaveZoneMeshes();
-                unsigned int now = timeGetTime();
-                if (now - last > 5000) {
-                    m_worldMap->cleanUp();
-                    last = now;
-                }
-                m_worldMap->update(position, zoom);
-                Sleep(10);
+            auto work = m_host.lockWorldWork();
+            if (!work) {
+                Sleep(5);
+                continue;
             }
+            m_world->enterZoneMeshes();
+            plasma::Vector<3, Fixed> position = m_mapPosition;
+            int zoom = m_mapZoom;
+            m_world->leaveZoneMeshes();
+            unsigned int now = timeGetTime();
+            if (now - last > 5000) {
+                m_worldMap->cleanUp();
+                last = now;
+            }
+            m_worldMap->update(position, zoom);
+            work.unlock();
+            Sleep(10);
         }
         m_worldMap->clear();
     });
@@ -525,7 +535,14 @@ Game::Game(World *world, WorldMap *worldMap, gfx::D3D11Renderer *renderer, plasm
         unsigned int last = timeGetTime();
         while (m_running) {
             unsigned int now = timeGetTime();
+            auto work = m_host.lockWorldWork();
+            if (!work) {
+                last = now;
+                Sleep(5);
+                continue;
+            }
             m_host.m_world.m_aiManager.update(now - last);
+            work.unlock();
             last = now;
             unsigned int elapsed = timeGetTime() - now;
             Sleep(elapsed < 40 ? 40 - elapsed : 1);
@@ -582,9 +599,9 @@ TextFX::TextFX()
 // receive and send threads are never started in this file.
 Game::~Game()
 {
+    m_running = false;
     delete m_server;
     disconnect();
-    m_running = false;
     std::cout << "waiting for music thread..." << std::endl;
     m_musicThread.join();
     m_audio->stopMusic();
@@ -610,6 +627,9 @@ Game::~Game()
     if (m_sendThread.joinable()) {
         m_sendThread.join();
     }
+    m_client.shutdown();
+    m_host.shutdown();
+    m_world->removeZones();
     if (m_socket) {
         closesocket(m_socket);
     }
@@ -648,6 +668,9 @@ void Game::applyOptions(const Options &options)
 {
     m_world->enterZoneMeshes();
     m_options = options;
+    m_renderer->setSunShadows(m_options.sunShadows != 0);
+    m_renderer->setGlobalIllumination(m_options.rsmGI != 0);
+    m_renderer->setMovingLeaves(m_options.movingLeaves != 0);
     m_options.save();
     EnterCriticalSection(&m_musicCriticalSection);
     m_musicVolume = (float)options.musicVolume * 0.01f;
@@ -1004,8 +1027,8 @@ void Game::handleButtonDown(int button)
             if (m_worldMap->m_cursorPosition[2] >= Fixed(0)) {
                 MapPlace place;
                 place.type = PlotNone;
-                float height =
-                    m_world->height((int)m_worldMap->m_cursorPosition[0], (int)m_worldMap->m_cursorPosition[1], false);
+                float height = m_world->terrainHeight((int)m_worldMap->m_cursorPosition[0],
+                                                      (int)m_worldMap->m_cursorPosition[1], 0);
                 plasma::Vector<2, int> block((int)m_worldMap->m_cursorPosition[0],
                                              (int)m_worldMap->m_cursorPosition[1]);
                 place.position = plasma::Vector<3, int>(block[0], block[1], (int)(std::max)(0.0f, height));
@@ -1060,7 +1083,7 @@ void Game::handleButtonDown(int button)
         if (m_worldMap->m_cursorPosition[2] > Fixed(0)) {
             m_targetMapPosition = m_worldMap->m_cursorPosition;
             m_targetMapPosition[2] =
-                Fixed(m_world->height((int)m_targetMapPosition[0], (int)m_targetMapPosition[1], false));
+                Fixed(m_world->terrainHeight((int)m_targetMapPosition[0], (int)m_targetMapPosition[1], 0));
             m_mapZoom--;
             if (m_mapZoom < 0) {
                 m_mapZoom = 0;
@@ -1519,11 +1542,10 @@ void Game::handleButtonUp(int button)
             m_shutdown = true;
             break;
         case StartMenuContinue:
-            loadCharacter(m_currentCharacterSlot, m_world->getLocalCreature());
+            resumeCharacter();
             m_interface.m_startMenuNode->setVisible(false);
             m_targetCameraDistance = 8.0f;
             m_cameraDistance = 8.0f;
-            m_world->spawnLocalCreature();
             break;
         }
     }
@@ -1742,15 +1764,79 @@ double blend(double seconds, float percent)
     return value;
 }
 
-void Game::changeWorld(int seed, const std::string &name)
+void Game::changeWorld(int seed, const std::string &name, bool resumePosition)
 {
     m_world->enterZoneMeshes();
-    m_world->getLocalCreature()->m_playerData->lastWorld.seed = seed;
-    m_world->getLocalCreature()->m_playerData->lastWorld.name = name;
     m_seed = seed;
     m_worldName = name;
-    m_world->retainLocalCreature();
+    const bool changing = m_world->m_seed != seed || m_world->m_worldName != name;
+    m_host.m_worldChangePending = changing;
+    m_placeOnTerrain = changing && !resumePosition;
+    if (!changing) {
+        auto &lastWorld = m_world->getLocalCreature()->m_playerData->lastWorld;
+        lastWorld.seed = seed;
+        lastWorld.name = name;
+    }
     m_world->leaveZoneMeshes();
+}
+
+void Game::applyWorldChange()
+{
+    if (!m_host.m_worldChangePending)
+        return;
+    std::unique_lock<std::shared_mutex> work(m_host.m_worldWork, std::try_to_lock);
+    if (!work)
+        return;
+
+    m_client.disconnect();
+    m_world->removeZones();
+    m_worldMap->clear();
+    m_host.loadWorld(m_seed, m_worldName);
+    m_world->init(m_seed, m_worldName);
+
+    Creature *player = m_world->getLocalCreature();
+    player->m_playerData->lastWorld.seed = m_seed;
+    player->m_playerData->lastWorld.name = m_worldName;
+    player->m_entityData.currentAbility = AbilityNone;
+    player->m_entityData.velocity = plasma::Vector<3, float>(0, 0, 0);
+    player->m_drawnPosition = player->m_entityData.position;
+    player->m_previousDrawnPosition = player->m_drawnPosition;
+    m_cameraFocusPosition = player->m_drawnPosition;
+    m_mapZoomChanged = false;
+    m_world->spawnLocalCreature();
+    m_renderer->resetViewDistance();
+    m_waitingForTerrain = true;
+    m_host.m_worldChangePending = false;
+}
+
+void Game::finishWorldLoad()
+{
+    if (!m_waitingForTerrain || m_host.m_worldChangePending)
+        return;
+
+    Creature *player = m_world->getLocalCreature();
+    auto &position = player->m_entityData.position;
+    const int x = position[0].toBlock();
+    const int y = position[1].toBlock();
+    Zone *zone = m_world->zone(floorDivide(x, BlocksPerZone), floorDivide(y, BlocksPerZone));
+    if (!zone || !zone->m_chunk.meshReady)
+        return;
+
+    // Use the generated column when a new world needs a spawn or a save is buried in terrain.
+    if (m_placeOnTerrain || m_world->getBlock(x, y, position[2].toBlock()).isSolid()) {
+        Field &field = *zone->field(x, y);
+        int surface = (int)std::floor(field.m_height) + 1;
+        const int top = field.m_baseZ + (int)field.size();
+        while (surface < top && field.getBlock(surface - field.m_baseZ).isSolid())
+            ++surface;
+        position[2] = Fixed(surface + player->m_entityData.appearance.size[2] * 0.5f);
+        player->m_entityData.velocity[2] = 0.0f;
+        player->m_drawnPosition = position;
+        player->m_previousDrawnPosition = position;
+        m_cameraFocusPosition = position;
+    }
+    m_placeOnTerrain = false;
+    m_waitingForTerrain = false;
 }
 
 void Game::disconnect()
@@ -2047,7 +2133,7 @@ void Game::handleMouseWheel(int direction)
             m_targetMapPosition[0] += offset[0];
             m_targetMapPosition[1] += offset[1];
             m_targetMapPosition[2] =
-                Fixed(m_world->height((int)m_targetMapPosition[0], (int)m_targetMapPosition[1], false));
+                Fixed(m_world->terrainHeight((int)m_targetMapPosition[0], (int)m_targetMapPosition[1], 0));
             m_mapPosition = m_targetMapPosition;
             m_mapZoomChanged = true;
         }
@@ -2254,6 +2340,7 @@ void Game::learnFormulas(int rarity)
 void Game::loadCharacter(int slot, Creature *creature)
 {
     m_world->enterZoneMeshes();
+    creature->m_pyroProgression = m_world->m_pyroProgression;
     std::stringstream key;
     key << slot;
     BytesIO data;
@@ -2270,6 +2357,22 @@ void Game::loadCharacter(int slot, Creature *creature)
         }
     }
     LeaveCriticalSection(&m_characterCriticalSection);
+    m_world->leaveZoneMeshes();
+}
+
+void Game::resumeCharacter()
+{
+    m_world->enterZoneMeshes();
+    Creature *player = m_world->getLocalCreature();
+    loadCharacter(m_currentCharacterSlot, player);
+    const auto &lastWorld = player->m_playerData->lastWorld;
+    if (lastWorld.name.empty())
+        changeWorld(123, "world", true);
+    else
+        changeWorld(lastWorld.seed, lastWorld.name, true);
+    if (!m_host.m_worldChangePending)
+        m_world->spawnLocalCreature();
+    m_waitingForTerrain = true;
     m_world->leaveZoneMeshes();
 }
 
@@ -2347,8 +2450,9 @@ void Game::onBack()
 void Game::onDeleteWorld()
 {
     if (m_currentWorld >= 0 && m_currentWorld < (int)m_worlds.size()) {
-        std::string worldFile = "Save\\world_" + m_worlds[m_currentWorld]->m_name + ".db";
-        std::string mapFile = "Save\\map_" + m_worlds[m_currentWorld]->m_name + ".db";
+        const std::string directory = m_world->saveDirectory();
+        std::string worldFile = directory + "/world_" + m_worlds[m_currentWorld]->m_name + ".db";
+        std::string mapFile = directory + "/map_" + m_worlds[m_currentWorld]->m_name + ".db";
         DeleteFileA(worldFile.c_str());
         DeleteFileA(mapFile.c_str());
         delete m_worlds[m_currentWorld];
@@ -2369,6 +2473,7 @@ void Game::onDeleteWorld()
 // characters database, saves it and adds a copy to the saved characters.
 void Game::onDoneCharacter()
 {
+    m_interface.m_characterStyleWidget->commitHairColors();
     m_interface.m_characterCreationNode->setVisible(false);
     std::string name = NarrowString(m_interface.m_characterName->getText(L"edit", true));
     strcpy(m_world->m_localCreature->m_entityData.name, name.c_str());
@@ -2391,11 +2496,13 @@ void Game::onDoneCharacter()
     }
     Creature *saved = new Creature(0);
     saved->m_entityData = m_world->m_localCreature->m_entityData;
+    saved->m_pyroProgression = m_world->m_pyroProgression;
     saved->m_inventory = m_world->getLocalCreature()->m_inventory;
     saved->m_buffs = m_world->m_localCreature->m_buffs;
     saved->m_drawnPosition = saved->m_entityData.position;
     saved->m_playerData = new PlayerData;
     *(CharacterStyle *)saved->m_playerData = *m_world->m_localCreature->m_playerData;
+    saved->m_playerData->hairGradient = m_world->m_localCreature->m_playerData->hairGradient;
     saved->m_playerData->knownFormulas = m_world->m_localCreature->m_playerData->knownFormulas;
     m_savedCharacters.push_back(saved);
     m_interface.updateSlots();
@@ -2474,7 +2581,7 @@ void Game::onSelectCharacter()
     m_world->enterZoneMeshes();
     m_currentCharacterSlot = m_interface.m_selectedCharacter;
     if (m_currentCharacterSlot >= 0 && m_currentCharacterSlot < (int)m_savedCharacters.size()) {
-        loadCharacter(m_currentCharacterSlot, m_world->getLocalCreature());
+        resumeCharacter();
         BytesIO data;
         data.write(m_interface.m_selectedCharacter);
         m_charactersDatabase.write("slot", data);
@@ -2498,6 +2605,8 @@ void Game::onSelectCharacter()
         m_world->m_localCreature->m_entityData.velocity = plasma::Vector<3, float>(0, 0, 0);
         m_world->m_localCreature->m_entityData.flags = CreatureFlagNone;
         m_world->m_localCreature->m_entityData.level = 1;
+        m_world->m_localCreature->m_entityData.progressionLevel = 1;
+        m_world->m_localCreature->m_entityData.xp = 0;
         Creature *player = m_world->m_localCreature;
         player->m_entityData.hp = player->maxHP();
         m_world->m_localCreature->m_entityData.equipment.weaponRight.category = ItemCategoryWeapon;
@@ -2514,8 +2623,8 @@ void Game::onSelectCharacter()
             plasma::Vector<3, Fixed>(Fixed(m_world->m_localCreature->m_entityData.portCity[0] * 16 + 8),
                                      Fixed((m_world->m_localCreature->m_entityData.portCity[1] + 2) * 16), Fixed(0));
         m_world->m_localCreature->m_entityData.position[2] =
-            m_world->height((int)m_world->m_localCreature->m_entityData.position[0],
-                            (int)m_world->m_localCreature->m_entityData.position[1], false);
+            m_world->terrainHeight((int)m_world->m_localCreature->m_entityData.position[0],
+                                   (int)m_world->m_localCreature->m_entityData.position[1], false);
         if (m_world->m_localCreature->m_playerData) {
             delete m_world->m_localCreature->m_playerData;
         }
@@ -2523,8 +2632,9 @@ void Game::onSelectCharacter()
         m_interface.m_characterName->setText(L"");
         m_interface.m_characterStyleWidget->reset();
         m_interface.m_characterStyleWidget->updateCreature(false);
+        m_world->spawnLocalCreature();
+        m_waitingForTerrain = true;
     }
-    m_world->spawnLocalCreature();
     m_world->leaveZoneMeshes();
 }
 
@@ -2756,6 +2866,7 @@ void Game::saveCharacter()
         m_world->leaveZoneMeshes();
         return;
     }
+    EnterCriticalSection(&m_characterCriticalSection);
     Creature *creature = new Creature(0);
     creature->m_entityData = m_world->m_localCreature->m_entityData;
     creature->m_petWaterLevel = m_world->m_localCreature->m_petWaterLevel;
@@ -2771,7 +2882,6 @@ void Game::saveCharacter()
     std::stringstream key;
     key << slot;
     compressBytes(data);
-    EnterCriticalSection(&m_characterCriticalSection);
     m_charactersDatabase.write(key.str(), data);
     LeaveCriticalSection(&m_characterCriticalSection);
 }
@@ -2860,7 +2970,7 @@ void Game::say(Creature *speaker, Creature *listener, const std::vector<Dialog> 
 
 void Game::scrollMap(int x, int y)
 {
-    m_targetMapPosition = plasma::Vector<3, Fixed>(Fixed(x), Fixed(y), Fixed(m_world->height(x, y, false)));
+    m_targetMapPosition = plasma::Vector<3, Fixed>(Fixed(x), Fixed(y), Fixed(m_world->terrainHeight(x, y, 0)));
     m_mapZoomChanged = true;
 }
 
@@ -3279,6 +3389,8 @@ int Game::soundId(int sound)
 // interface, location and music, then draws the frame.
 void Game::update(double milliseconds)
 {
+    applyWorldChange();
+
     // Frame time capped at one second.
     double step = milliseconds > 1000.0 ? 1000.0 : milliseconds;
     m_interface.m_buttonCenters.clear();
@@ -3329,7 +3441,7 @@ void Game::update(double milliseconds)
     // The frame's clock (every stage's time goes into the profile at the end), the zone meshes held for the frame, the
     // player's Steam id as its seed, and the updates the frame collects for the host.
     unsigned long start = timeGetTime();
-    m_world->enterZoneMeshes();
+    const ZoneMeshLock meshes(*m_world);
     if (m_world->m_localCreature->m_entityData.seed == 0) {
         m_world->m_localCreature->m_entityData.seed = SteamUser()->GetSteamID().ConvertToUint64();
     }
@@ -3467,9 +3579,11 @@ void Game::update(double milliseconds)
                                                           m_interface.m_characterSelection.m_node->isVisible() ||
                                                           m_interface.m_characterCreationNode->isVisible());
 
-    // The world's step, in slices of at most 16 ms, while the world is the one being played; otherwise only the map
-    // overlay is hidden.
-    if (m_seed == m_world->m_seed && m_worldName == m_world->m_worldName) {
+    finishWorldLoad();
+
+    // Simulate in slices of at most 16 ms once the local terrain is ready.
+    const bool worldReady = !m_waitingForTerrain && !m_host.m_worldChangePending;
+    if (worldReady) {
         double remaining = step;
         if (step > MaxWorldStepMs) {
             do {
@@ -3575,7 +3689,8 @@ void Game::update(double milliseconds)
         m_targetMapPosition = m_world->m_localCreature->m_entityData.position;
         m_mapPosition = m_targetMapPosition;
     } else {
-        m_targetMapPosition[2] = Fixed(m_world->height((int)m_targetMapPosition[0], (int)m_targetMapPosition[1], 0));
+        m_targetMapPosition[2] =
+            Fixed(m_world->terrainHeight((int)m_targetMapPosition[0], (int)m_targetMapPosition[1], 0));
     }
     blend(m_mapPosition, m_targetMapPosition, step, 0.01f);
     unsigned int afterMap = timeGetTime();
@@ -4004,7 +4119,8 @@ void Game::update(double milliseconds)
     std::sort(nearby.begin(), nearby.end());
 
     // The player's actions, while a world is played, the character is not flying and no menu is shown.
-    if (!m_world->m_worldName.empty() && m_world->m_localCreature->m_entityData.currentAbility != AbilityEagleFlight &&
+    if (worldReady && !m_world->m_worldName.empty() &&
+        m_world->m_localCreature->m_entityData.currentAbility != AbilityEagleFlight &&
         m_world->m_localCreature->m_entityData.currentAbility != AbilityMenuView &&
         !m_interface.m_startMenuNode->isVisible() && !m_interface.m_characterSelection.m_node->isVisible() &&
         !m_interface.m_characterCreationNode->isVisible()) {
@@ -4305,11 +4421,18 @@ void Game::update(double milliseconds)
     updateCrafting(stepMs);
     updateCamera(step);
     updateClimateSounds(stepMs);
-    int xp = m_world->m_localCreature->totalXP();
-    int level = m_world->m_localCreature->m_entityData.level;
+    auto &playerProgress = *m_world->m_localCreature;
+    const auto xp = playerProgress.totalXP();
+    const int level = playerProgress.displayLevel();
+    bool progressChanged = false;
     for (auto &kill : m_world->m_serverUpdates.m_killPacketList) {
-        m_world->onKill(kill);
+        if (kill.killerId == playerProgress.m_id)
+            progressChanged |= playerProgress.awardExperience(kill.experience);
+        progressChanged |= updateTownQuest(kill);
     }
+    progressChanged |= assignTownQuestTargets();
+    if (progressChanged)
+        saveCharacter();
 
     // The menu keys, on their press, while the chat is not typed into and no start menu is shown; the equipment slots
     // follow the equipment inventory and the formula details the crafting inventory.
@@ -4831,7 +4954,7 @@ void Game::update(double milliseconds)
 
     // What the frame gained: XP, gold, platinum (in the region it started in) and a level, each as a floating text; XP
     // and the level also in the chat.
-    int newXP = m_world->m_localCreature->totalXP();
+    const auto newXP = m_world->m_localCreature->totalXP();
     if (newXP > xp) {
         TextFX fx;
         fx.color = plasma::Vector<4, float>(0.65f, 0.4f, 1.0f, 1.0f);
@@ -4894,7 +5017,7 @@ void Game::update(double milliseconds)
         fx.text = text.str();
         m_textFx.push_back(fx);
     }
-    int newLevel = m_world->m_localCreature->m_entityData.level;
+    const int newLevel = m_world->m_localCreature->displayLevel();
     if (newLevel > level) {
         TextFX fx;
         fx.color = plasma::Vector<4, float>(1.0f, 0.9f, 0.5f, 1.0f);
@@ -4919,11 +5042,7 @@ void Game::update(double milliseconds)
         m_interface.m_inGame.m_chatWidget->printMessage(text.str(), plasma::Vector<3, unsigned char>(255, 220, 128));
     }
 
-    // The frame drawn: the renderer stops when the world shown is not the one played; the draw flags; the menu open
-    // and close sounds (86, 87).
-    if (m_seed != m_world->m_seed || m_worldName != m_world->m_worldName) {
-        m_renderer->resetViewDistance();
-    }
+    // Draw flags and the menu open and close sounds (86, 87).
     int flags = 0;
     if (s_debugDrawCreatureBlocks)
         flags = gfx::RenderFlagDebugCreatureBlocks;
@@ -4958,6 +5077,9 @@ void Game::update(double milliseconds)
     unsigned int beforeDraw = timeGetTime();
     int zoneRadius = (std::max)(3, 30 * m_options.renderDistance / 100);
     plasma::Vector<3, float> cameraAngle(m_cameraAngle);
+    if (m_options.waterLilies) {
+        flags |= gfx::RenderFlagWaterLilies;
+    }
     if (startMenuShown) {
         flags |= gfx::RenderFlagLogo;
     }
@@ -5010,7 +5132,6 @@ void Game::update(double milliseconds)
     // The world's updates go to the host and start afresh.
     m_client.addServerUpdates(m_world->m_serverUpdates);
     m_world->m_serverUpdates = ServerUpdates();
-    m_world->leaveZoneMeshes();
 }
 
 void Game::moveCharacter(double step)
@@ -6591,13 +6712,14 @@ bool Game::interactionPrompt()
                                 speech->m_readTime = (float)speech->getDialogDuration();
                             }
                         } else {
-                            std::vector<std::string> script = m_world->talkScript(target);
-                            if (!script.empty()) {
-                                std::vector<Dialog> dialogs;
+                            std::vector<Dialog> dialogs;
+                            if (!talkAboutTownQuest(*target, dialogs)) {
+                                std::vector<std::string> script = m_world->talkScript(target);
                                 m_speech.generateFromScript(script, (unsigned long long)target->m_id % 100000, dialogs,
                                                             L"");
-                                say(target, m_world->m_localCreature, dialogs);
                             }
+                            if (!dialogs.empty())
+                                say(target, m_world->m_localCreature, dialogs);
                             interact(target);
                         }
                     }
@@ -7642,8 +7764,9 @@ void Game::updateCreatureLabels(std::vector<NearbyCreature> &creatures)
         label->setText(L"faction", text.str(), true);
         text.str(L"");
 
-        if (it->creature->m_entityData.hostilityType == HostilityPlayer)
-            text << L"LV " << it->creature->m_entityData.level << L" ";
+        const auto hostility = it->creature->m_entityData.hostilityType;
+        if (hostility == HostilityPlayer || (it->creature->m_pyroProgression && hostility == HostilityEnemy))
+            text << L"LV " << it->creature->displayLevel() << L" ";
         std::list<plasma::Node *> infoNodes;
         label->findNodes(infoNodes, L"info");
         plasma::Vector<4, float> color(1.0f, 1.0f, 1.0f, 1.0f);
@@ -8785,6 +8908,7 @@ plasma::Vector<2, float> Game::writeItemInfo(BaseWidget *widget, Item *item, int
                                              ZoneItem *zoneItem, Item *compareItem)
 {
     plasma::Vector<2, float> position((float)x, (float)y);
+    const bool leveledGear = m_world->m_pyroProgression && item->isProgressionGear();
     std::wstringstream text;
     text.str(L"");
     text << m_speech.createItemName(*item);
@@ -8801,7 +8925,8 @@ plasma::Vector<2, float> Game::writeItemInfo(BaseWidget *widget, Item *item, int
     if (showName) {
         widget->setTextSize(scale * 15.0f);
         widget->setTextStrokeRadius(4.0f);
-        widget->setTextColor(item->textColor(m_world->m_localCreature->m_entityData.region));
+        widget->setTextColor(leveledGear ? rarityColor(item->rarity)
+                                         : item->textColor(m_world->m_localCreature->m_entityData.region));
         plasma::Vector<2, float> end = widget->renderText(text.str(), position[0], position[1]);
         position[1] = end[1] + scale * 24.0f;
     }
@@ -8818,7 +8943,14 @@ plasma::Vector<2, float> Game::writeItemInfo(BaseWidget *widget, Item *item, int
 
     // The rarity of equipment as stars (the item's own over grey ones), and the named land the item comes from, gold
     // when it is at full rarity there.
-    if (item->hasRegion()) {
+    if (leveledGear) {
+        const int level = item->gearLevel();
+        widget->setTextColor(level <= m_world->m_localCreature->displayLevel()
+                                 ? rarityColor(item->rarity)
+                                 : plasma::Vector<4, float>(1.0f, 0.4f, 0.35f, 1.0f));
+        widget->renderText(L"Requires level " + std::to_wstring(level), position[0], position[1]);
+        position[1] += scale * 24.0f;
+    } else if (item->hasRegion()) {
         text.str(L"");
         if ((item->category >= ItemCategoryWeapon && item->category <= ItemCategoryRing) ||
             item->category == ItemCategoryEyePatch) {

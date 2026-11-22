@@ -1,4 +1,4 @@
-// Texture stores a named image's pixels and sampling format. D3D11Texture creates the device resource on first use.
+// Texture stores a named image's pixels and sampling format. VulkanTexture creates the device resource on first use.
 // Transient textures have no engine ID and discard pixels after upload.
 #pragma once
 #include <list>
@@ -52,7 +52,7 @@ public:
             const std::wstring &name, bool transient);
     virtual ~Texture();
 
-    // Binds the image to a pixel-shader resource slot; D3D11Drawing uses slot 1.
+    // Binds the image to a pixel-shader resource slot; VulkanDrawing uses slot 1.
     virtual void bind(unsigned slot) {}
     // Gives the pixels (in the texture's format) to the device.
     virtual void upload(const unsigned char *pixels) {}

@@ -7,7 +7,9 @@
 #include <algorithm>
 #include <list>
 #include <array>
+#include <cstdint>
 #include <map>
+#include <memory>
 #include <set>
 #include <string>
 #include <unordered_map>
@@ -26,6 +28,7 @@
 
 namespace cube {
 
+class AlphaTerrain;
 class Creature;
 class Inventory;
 class SpriteManager;
@@ -110,6 +113,7 @@ public:
         float enclave(int areaType, float areaInfluence);
         float wetness();
         float biomeElevation(int areaType, float areaInfluence);
+        float alphaReliefStrength() const;
         float desertness();
         // The forest biomes 3..6 (Woodlands, Jungle, Darkwoods, SnowForest).
         float forest();
@@ -153,7 +157,8 @@ public:
             bool unsupportedStep;              // path step has no supporting block
             bool inSpiritWorld;                // controls breakable-bit tests
             int searchBudget;                  // constructor 50, update caps at 500
-            float speed;                       // Floating-point state value.
+            bool traveling = false;
+            float speed; // Floating-point state value.
             std::list<Interaction> interactions;
             unsigned int flags;         // EntityData::flags snapshot
             unsigned int binaryToggles; // Entity flag snapshot.
@@ -186,6 +191,7 @@ public:
         bool escort(Creature *creature, int milliseconds);
         bool handleTarget(Creature *creature, int milliseconds);
         bool idle(Creature *creature, int milliseconds);
+        void travel(Creature *creature);
         bool mirrorOwnerActions(Creature *creature, int milliseconds);
         bool watchOrGreetPlayer(Creature *creature, int milliseconds);
         bool targetSkill(Creature *creature, int milliseconds);
@@ -193,6 +199,7 @@ public:
         void goTo(State &state, Creature *target, float range, bool probeAhead, bool matchSpeed);
         void startPath(State &state);
         void updateCreature(Creature *creature, int milliseconds);
+        void updateAquatic(Creature *creature, int milliseconds);
         bool walkPath(State &state);
 
         explicit AIManager(World *world);
@@ -202,8 +209,11 @@ public:
         std::map<long long, State> m_states; // Creature ID key.
     };
 
-    explicit World(SpriteManager *spriteManager);
+    explicit World(SpriteManager *spriteManager, std::shared_ptr<AlphaTerrain> alphaTerrain = {},
+                   bool largerBiomes = false, bool pyroProgression = false, bool aquaticEnemies = false);
     virtual ~World();
+    const char *saveDirectory() const;
+    int networkProtocolVersion() const;
 
     // Returns the block at world block coordinates from its loaded zone, or the default block if the zone is not
     // loaded.
@@ -268,6 +278,7 @@ public:
     }
     // Appends the creature to m_creatures and m_creaturesById ().
     void addCreature(Creature *creature);
+    void detachCreature(Creature *creature);
     // For the building types whose kind (buildingKind) is 1, 3, 4, 7 or 8 and for type 25: completes the set of open
     // sides (JoinedSideMinusX and JoinedSidePlusX one axis, JoinedSideMinusY and JoinedSidePlusY the other) of the
     // building at zone (x, y) so that each axis is open at both ends or at neither, and at least one axis is open
@@ -401,7 +412,8 @@ public:
     // Whether a zone building type is 24, 45 or 46, and whether it is 22..26 or 92 (Zone's generator).
     bool isCourtType(int type);
     bool isCoveredType(int type);
-    plasma::Vector<2, int> landCenter(int x, int y);
+    plasma::Vector<2, int> landCenter(int x, int y) const;
+    int blocksPerLand() const { return m_largerBiomes ? BlocksPerLand * 3 / 2 : BlocksPerLand; }
     int missionTargetType(int type, int x, int y, bool large);
     plasma::Vector<2, int> houseCorner(int x, int y);
     int housePart(int x, int y);
@@ -428,7 +440,6 @@ public:
 
     // The object of a zone by (zone x, zone y, index), or 0 (the first game file's AI and Game).
     StaticEntity *object(const plasma::Vector<3, int> &id);
-    void onKill(const ServerUpdates::KillPacket &kill);
     void initCompanion(long long ownerId, Creature *companion);
     // Removes and deletes every non-player creature that is more than 320 blocks (horizontally) from all player
     // creatures.
@@ -506,13 +517,18 @@ public:
     // Whether the building of a zone (streetBuildingType at the zone's spawn point) has the given storey: below
     // buildingStoreys of its type, and for type 45 inside a castle part.
     bool isOccupiedStorey(int zoneX, int zoneY, int storey);
+    static ReliefSurface reliefSurface(bool alphaTerrain, float offset, float height, float heightWest,
+                                       float heightEast, float heightSouth, float heightNorth, float desertness);
+    BlockProperties<float> reliefStoneBlock(int x, int y, int z, float temperature, float humidity, float firelands,
+                                            float undead);
     // Surface block at height z: lava or poison above weight 0.5; columnBlock below all five heights, in water, on a
     // path or beach; otherwise coverBlock blended with columnBlock where neighbouring heights differ by more than a
     // block. Path values above 0.5 select a path block.
     BlockProperties<float> surfaceBlock(int x, int y, int z, float height, float heightWest, float heightEast,
                                         float heightSouth, float heightNorth, float cliffs, float temperature,
                                         float humidity, float sand, float fade, float path, float firelands,
-                                        float undead, float enchantedForest, float lava, float poison);
+                                        float undead, float enchantedForest, float lava, float poison,
+                                        const ReliefSurface &relief = {});
     void harvestEnvironmentColors(const plasma::Vector<3, Fixed> &position, plasma::Vector<4, float> &skyColor1,
                                   plasma::Vector<4, float> &skyColor2, plasma::Vector<4, float> &fogColor,
                                   plasma::Vector<4, float> &sunColor, plasma::Vector<4, float> &light,
@@ -618,6 +634,21 @@ public:
     int locationType(int x, int y) { return locationType(x, y, isLargePlace(x, y)); }
     int randomPet(int seed) { return m_petRaces[hash(seed) % m_petRaces.size()]; }
     float height(int x, int y, int mode);
+    // Ground elevation with the optional relief. height() is the native layout sample.
+    float terrainHeight(int x, int y, int mode);
+    // roadDistance comes from streetAmount.
+    float terrainOffset(int x, int y, float nativeHeight, const BiomeSample &biomes, const AreaInfo &area,
+                        float roadDistance);
+    // Estimated blocks from (x, y) to the edge of the nearest flat river, lava or poison channel bed, or a large value
+    // where no channel runs. The profile's depth is the channel's strength over the column (biome blends).
+    float channelDistance(int x, int y, const BiomeSample &biomes, const AreaInfo &area);
+    // Whether (x, y) lies within margin blocks of a village's radius.
+    bool nearVillage(int x, int y, float margin);
+    // Alpha terrain only: false for an ordinary tree whose crown the relief would bury in the slope beside it, or that
+    // stands so close to a neighbouring tree that their crowns would merge. Zones and the map skip those trees.
+    bool treeFitsTerrain(int cellX, int cellY, int type);
+    static bool isOrdinaryTree(int type);
+    bool hasSurfaceWater(int x, int y, int bottom, int top);
     // The region (8192-block cell with a hashed centre; Item::region, EntityData::region) that a block position
     // belongs to. Inside the inner part of a place (influence at least 0.25) the place's centre decides, so that a
     // place lies in one region.
@@ -710,13 +741,20 @@ public:
     void biomeSample(int x, int y, BiomeSample &sample);
     // Terrain generator inputs for one block column, computed from its biome weights and passed to height. Each weight
     // lies in 0..1. The road weight is 1 on a road and 0 away from roads.
-    float streetAmount(int x, int y, int areaType, float areaInfluence);
+    // roadDistance, when given, receives the distance to the nearest road's centre line (warped like the roads).
+    float streetAmount(int x, int y, int areaType, float areaInfluence, float *roadDistance = nullptr);
     // Water channels (rivers and lakes): ridged noise that is 1 along its zero lines, wider in wetlands, absent in the
     // firelands and the undead biomes and on roads. > 0.25 SpawnLocationRiverEdge, > 0.5 SpawnLocationRiver.
     float valleyWater(int x, int y, float road, float firelands, float undead, float wetlands, float mountains,
                       AreaInfo *info);
     // The same channels in the firelands (lava rivers, lava lakes, a volcano's crater): surfaceBlock's lava.
     float lavaChannels(int x, int y, float road, float firelands, float mountains, AreaInfo *info);
+    // The channel noises behind valleyWater, lavaChannels and poisonChannels (0 on a centre line), and their shared
+    // depth profile.
+    float riverRidge(int x, int y, float wetlands);
+    float lavaRidge(int x, int y);
+    float poisonRidge(int x, int y);
+    static float channelProfile(float ridge);
     // The same channels in the undead biomes (deadlands, dark woods): surfaceBlock's poison.
     float poisonChannels(int x, int y, float road, float undead, float mountains, AreaInfo *info);
     // Mountain ridges and cliffs: noise ridges strengthened by the mountains biome and mountain or volcano places,
@@ -775,7 +813,7 @@ public:
     bool emptyUpdateStep() { return false; }
     void inspectCreatures(float milliseconds);
     void updateZones();
-    bool removeFarZone(int radius);
+    bool removeFarZone(const plasma::Vector<2, int> &center, int radius);
     void removeZones();
     void enterZones();
     void leaveZones();
@@ -789,7 +827,31 @@ public:
     std::list<Creature *> m_obstacles;
     std::list<ServerUpdates::BulletPacket> m_projectiles;
     SpriteManager *m_spriteManager; // the constructor's argument
+    const std::shared_ptr<AlphaTerrain> m_alphaTerrain;
+    const bool m_largerBiomes;
+    const bool m_pyroProgression;
+    const bool m_aquaticEnemies;
     AIManager m_aiManager;
+
+    struct TravelParty {
+        plasma::Vector<2, int> origin;
+        plasma::Vector<2, int> destination;
+        plasma::Vector<2, double> position;
+        std::array<long long, 4> members {};
+        std::array<std::unique_ptr<Creature>, 4> parked;
+        float departureDelay = 0.0f;
+        float offscreenTime = 0.0f;
+        unsigned int waypointVariation = 0;
+        bool hostile = false; // Keeps out of towns: stops at their edge rather than their centre.
+    };
+    void updateTravelParties(float milliseconds);
+    bool createTravelParty(const Creature &player);
+    bool updateTravelParty(TravelParty &party, const std::vector<const Creature *> &players, float milliseconds);
+    std::vector<TravelParty> m_travelParties;
+    float m_travelPartyElapsed = 0.0f;
+    float m_travelSpawnDelay = 0.0f;
+    std::uint32_t m_travelMemberSerial = 0;
+
     ServerUpdates m_serverUpdates;
     std::set<Zone *> m_zonesWithChangedItems;
     std::set<Zone *> m_zonesWithChangedObjects;
@@ -836,6 +898,27 @@ public:
     std::vector<Item> m_unusedItems500;
     std::vector<Item> m_unusedItems518;
     std::vector<Item> m_unusedItems530;
+
+private:
+    float sampleHeight(int x, int y, int mode, bool useRelief, int *waterEnd = nullptr);
+    // Alpha tree placement (WorldPlaces.cpp).
+    struct TreeTest {
+        const World *world = nullptr;
+        int seed = 0, cellX = 0, cellY = 0, type = 0;
+        bool largerBiomes = false, result = true;
+    };
+    using TreeCache = std::array<TreeTest, 256>;
+    // Two crowns closer than this share of their radii's sum merge into one.
+    static constexpr float CrownSpacing = 0.75f;
+    bool treeClearsSlope(int cellX, int cellY, int type);
+    float crownRadius(int cellX, int cellY, int type);
+    template<typename Test> bool cachedTreeTest(TreeCache &cache, int cellX, int cellY, int type, Test test);
+    plasma::Vector<2, int> sampleLands(int x, int y, BiomeSample *sample);
+    int regionLevel(const plasma::Vector<2, int> &region) const;
+    void updateProgressionLevels();
+    std::pair<long long, int> progressionKillCredit(Creature *attacker, const Creature &target);
+    std::map<std::array<int, 2>, int> m_regionLevels;
+    int m_soloLevel = 1;
 };
 
 // Corridor describes a block column along a dungeon passage from its start towards a region border, wandering sideways

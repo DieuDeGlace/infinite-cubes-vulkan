@@ -4,6 +4,7 @@
 // Creature AI navigation, support, combat and update operations.
 #include "cube/Noise.h"
 #include "cube/World.h"
+#include "cube/TravelParty.h"
 #include "cube/Sight.h"
 #include <iostream>
 #include "cube/CreatureIds.h"
@@ -240,6 +241,8 @@ bool World::AIManager::canWalk(const plasma::Vector<3, float> &size, const plasm
     plasma::Vector<3, int> block(x, y, z);
     plasma::Vector<3, float> direction((float)(to[0] - from[0]), (float)(to[1] - from[1]), 0.0f);
     float length = sqrtf(direction.squaredLength());
+    if (length == 0.0f)
+        return inRange(from, to, range);
     direction /= length;
     float distance = std::min(MaxWalkProbeDistance, length);
     float travelled = 0.0f;
@@ -347,27 +350,23 @@ void World::AIManager::State::clearPath()
 
 void World::AIManager::finishPathSearch(State &state)
 {
-    plasma::Vector<3, int> start = fixedToBlock(state.start);
-    plasma::Vector<3, int> destination = fixedToBlock(state.destination);
     state.path.clear();
-    plasma::Vector<3, int> position = destination;
-    if (state.best != state.nodes.end())
-        position = plasma::Vector<3, int>(state.best->first[0], state.best->first[1], state.best->first[2]);
-    state.path.push_front(position);
-    int count = 0;
+    if (state.best == state.nodes.end())
+        return;
+
+    const auto &start = state.startBlock;
+    const auto &best = state.best->first;
+    plasma::Vector<3, int> position(best[0], best[1], best[2]);
     while (position != start) {
-        if (count > (int)state.nodes.size())
-            break;
-        ++count;
-        PathNode *node = state.pathNode(position[0], position[1], position[2]);
-        if (!node)
-            break;
-        plasma::Vector<3, int> previous = node->parent;
-        if (position == previous)
-            break;
-        position = previous;
-        state.path.push_front(previous);
+        const PathNode *node = state.pathNode(position[0], position[1], position[2]);
+        if (!node || position == node->parent || state.path.size() >= state.nodes.size()) {
+            state.path.clear();
+            return;
+        }
+        state.path.push_front(position);
+        position = node->parent;
     }
+    state.path.push_front(start);
 }
 
 bool World::AIManager::idle(Creature *creature, int milliseconds)
@@ -619,6 +618,26 @@ bool World::AIManager::idle(Creature *creature, int milliseconds)
     return true;
 }
 
+void World::AIManager::travel(Creature *creature)
+{
+    State &state = m_states[creature->m_id];
+    state.traveling = true;
+    state.targetId = 0;
+    state.speed = 0.0f;
+    state.acceleration = {0.0f, 0.0f, 0.0f};
+    creature->m_entityData.binaryToggles.fastMovement = false;
+    if (!creature->m_travelWaypoint) {
+        state.clearPath();
+        return;
+    }
+
+    state.start = state.position;
+    state.start[2] -= Fixed(state.size[2] * 0.5f - FootLift);
+    state.destination = *creature->m_travelWaypoint;
+    state.range = ApproachRange;
+    startPath(state);
+}
+
 bool World::AIManager::inRange(const plasma::Vector<3, Fixed> &from, const plasma::Vector<3, Fixed> &to, float range)
 {
     plasma::Vector<3, float> direction(to - from);
@@ -733,10 +752,11 @@ float World::AIManager::rayLength(const plasma::Vector<3, Fixed> &from, const pl
 void World::AIManager::State::setPathNode(int x, int y, int z, const PathNode &node)
 {
     IntTriple position = {{x, y, z}};
-    nodes[position] = node;
+    const auto entry = nodes.insert_or_assign(position, node).first;
     frontier.insert(position);
-    if (best == nodes.end() || node.heuristic < best->second.heuristic)
-        best = nodes.find(position);
+    if (best == nodes.end() || node.heuristic < best->second.heuristic ||
+        (node.heuristic == best->second.heuristic && node.movementCost < best->second.movementCost))
+        best = entry;
 }
 
 void World::AIManager::startPath(State &state)
@@ -806,7 +826,8 @@ bool World::AIManager::walkPath(State &state)
     for (auto it = state.frontier.begin(); it != state.frontier.end(); ++it) {
         Sleep(0);
         PathNode *node = state.pathNode((*it)[0], (*it)[1], (*it)[2]);
-        if (node && (!currentNode || node->totalCost < lowest)) {
+        if (node && (!currentNode || node->totalCost < lowest ||
+                     (node->totalCost == lowest && node->heuristic < currentNode->heuristic))) {
             lowest = node->totalCost;
             selected = it;
             currentNode = node;
@@ -905,11 +926,11 @@ bool World::AIManager::walkPath(State &state)
 
     // Expand the block into its neighbours, each written out in full: a neighbour not yet in the path map is added
     // with its heuristic (twice the 10/14-weighted octile distance to the destination block); an open neighbour takes
-    // the new cost when it is lower. A step costs more without support underfoot. A diagonal is tried only when both
-    // of its axial neighbours were updated.
-    bool west = false;
-    if (!wallWest &&
-        (supported || floorWest || wallSouth || wallNorth || wallSouthWest || wallNorthWest || type == BlockWater)) {
+    // the new cost when it is lower. A step costs more without support underfoot. A diagonal needs both axial
+    // steps to be passable, even when those nodes already have a cheaper route.
+    const bool west = !wallWest && (supported || floorWest || wallSouth || wallNorth || wallSouthWest ||
+                                    wallNorthWest || type == BlockWater);
+    if (west) {
         plasma::Vector<3, int> next(current[0] - 1, current[1], current[2]);
         PathNode *node = state.pathNode(next[0], next[1], next[2]);
         if (!node) {
@@ -928,7 +949,6 @@ bool World::AIManager::walkPath(State &state)
             added.totalCost = cost + heuristic;
             added.parent = current;
             state.setPathNode(next[0], next[1], next[2], added);
-            west = true;
         } else if (state.isOpen(next[0], next[1], next[2])) {
             int heuristic = node->heuristic;
             int cost = currentNode->movementCost + 10;
@@ -941,13 +961,12 @@ bool World::AIManager::walkPath(State &state)
                 improved.totalCost = cost + heuristic;
                 improved.parent = current;
                 state.setPathNode(next[0], next[1], next[2], improved);
-                west = true;
             }
         }
     }
-    bool east = false;
-    if (!wallEast &&
-        (supported || floorEast || wallSouth || wallNorth || wallSouthEast || wallNorthEast || type == BlockWater)) {
+    const bool east = !wallEast && (supported || floorEast || wallSouth || wallNorth || wallSouthEast ||
+                                    wallNorthEast || type == BlockWater);
+    if (east) {
         plasma::Vector<3, int> next(current[0] + 1, current[1], current[2]);
         PathNode *node = state.pathNode(next[0], next[1], next[2]);
         if (!node) {
@@ -966,7 +985,6 @@ bool World::AIManager::walkPath(State &state)
             added.totalCost = cost + heuristic;
             added.parent = current;
             state.setPathNode(next[0], next[1], next[2], added);
-            east = true;
         } else if (state.isOpen(next[0], next[1], next[2])) {
             int heuristic = node->heuristic;
             int cost = currentNode->movementCost + 10;
@@ -979,13 +997,12 @@ bool World::AIManager::walkPath(State &state)
                 improved.totalCost = cost + heuristic;
                 improved.parent = current;
                 state.setPathNode(next[0], next[1], next[2], improved);
-                east = true;
             }
         }
     }
-    bool south = false;
-    if (!wallSouth &&
-        (supported || floorSouth || wallWest || wallEast || wallSouthWest || wallSouthEast || type == BlockWater)) {
+    const bool south = !wallSouth && (supported || floorSouth || wallWest || wallEast || wallSouthWest ||
+                                      wallSouthEast || type == BlockWater);
+    if (south) {
         plasma::Vector<3, int> next(current[0], current[1] - 1, current[2]);
         PathNode *node = state.pathNode(next[0], next[1], next[2]);
         if (!node) {
@@ -1004,7 +1021,6 @@ bool World::AIManager::walkPath(State &state)
             added.totalCost = cost + heuristic;
             added.parent = current;
             state.setPathNode(next[0], next[1], next[2], added);
-            south = true;
         } else if (state.isOpen(next[0], next[1], next[2])) {
             int heuristic = node->heuristic;
             int cost = currentNode->movementCost + 10;
@@ -1017,13 +1033,12 @@ bool World::AIManager::walkPath(State &state)
                 improved.totalCost = cost + heuristic;
                 improved.parent = current;
                 state.setPathNode(next[0], next[1], next[2], improved);
-                south = true;
             }
         }
     }
-    bool north = false;
-    if (!wallNorth &&
-        (supported || floorNorth || wallWest || wallEast || wallNorthWest || wallNorthEast || type == BlockWater)) {
+    const bool north = !wallNorth && (supported || floorNorth || wallWest || wallEast || wallNorthWest ||
+                                      wallNorthEast || type == BlockWater);
+    if (north) {
         plasma::Vector<3, int> next(current[0], current[1] + 1, current[2]);
         PathNode *node = state.pathNode(next[0], next[1], next[2]);
         if (!node) {
@@ -1042,7 +1057,6 @@ bool World::AIManager::walkPath(State &state)
             added.totalCost = cost + heuristic;
             added.parent = current;
             state.setPathNode(next[0], next[1], next[2], added);
-            north = true;
         } else if (state.isOpen(next[0], next[1], next[2])) {
             int heuristic = node->heuristic;
             int cost = currentNode->movementCost + 10;
@@ -1055,7 +1069,6 @@ bool World::AIManager::walkPath(State &state)
                 improved.totalCost = cost + heuristic;
                 improved.parent = current;
                 state.setPathNode(next[0], next[1], next[2], improved);
-                north = true;
             }
         }
     }
@@ -1273,7 +1286,7 @@ int zoneCoordinate(Fixed position)
 void World::AIManager::goTo(State &state, Creature *target, float range, bool probeAhead, bool matchSpeed)
 {
     state.destination = target->m_entityData.position;
-    if (state.probeAhead) {
+    if (probeAhead) {
         plasma::Matrix<float> rotation;
         rotation.identity();
         rotation.rotateZ(target->m_entityData.rotation[2]);
@@ -1327,6 +1340,7 @@ void World::AIManager::update(int milliseconds)
             state.binaryToggles = *(const unsigned short *)&creature->m_entityData.binaryToggles;
             state.attackRotation = creature->m_entityData.attackRotation;
             state.interactions.clear();
+            state.traveling = false;
             state.inSpiritWorld = creature->findBuff(BuffSpiritworld) != nullptr;
             updateCreature(creature, milliseconds);
             state.attackRotation = creature->m_entityData.attackRotation;
@@ -1418,39 +1432,50 @@ void World::AIManager::update(int milliseconds)
                 state.searchBudget = MinSearchBudget;
         } else {
             int budget = state.searchBudget;
+            if (state.traveling)
+                budget = std::min(budget, 50);
             if (state.binaryToggles & (1 << CreatureTogglePlayerAi))
                 budget = PlayerAiSearchBudget;
             state.start = state.position;
             state.start[2] -= Fixed(state.size[2] * 0.5f - FootLift);
             state.destination = destination;
             startPath(state);
-            for (int i = 0; i < budget; ++i) {
-                if (!state.path.empty()) {
-                    plasma::Vector<3, int> difference = state.path.back() - fixedToBlock(state.destination);
-                    if (state.size[0] * state.size[0] >= (float)difference.squaredLength())
-                        break;
-                }
-                walkPath(state);
-                finishPathSearch(state);
+            const auto goal = fixedToBlock(state.destination);
+            const auto reachedGoal = [&state, &goal] {
+                const auto &best = state.best->first;
+                const auto offset = plasma::Vector<3, int>(best[0], best[1], best[2]) - goal;
+                return (float)offset.squaredLength() <= state.size[0] * state.size[0];
+            };
+            for (int i = 0; i < budget && !reachedGoal(); ++i) {
+                if (!walkPath(state))
+                    break;
                 Sleep(0);
             }
-            if (!state.path.empty()) {
-                plasma::Vector<3, int> difference = state.path.back() - fixedToBlock(state.destination);
-                if ((float)difference.squaredLength() > state.size[0] * state.size[0])
-                    state.searchBudget += state.searchBudget / 10;
-            }
+            finishPathSearch(state);
+            const bool complete = reachedGoal();
+            if (!complete)
+                state.searchBudget += state.searchBudget / 10;
             state.acceleration = plasma::Vector<3, float>(0, 0, 0);
             if (!(state.binaryToggles & (1 << CreatureTogglePlayerAi)) || state.path.size() > MinPlayerAiPathLength) {
+                const plasma::Vector<3, float> towardsGoal(destination - state.position);
                 int remaining = (int)state.path.size();
                 for (auto step = state.path.rbegin(); step != state.path.rend(); ++step) {
                     Sleep(0);
-                    --remaining;
+                    if (--remaining == 0)
+                        break;
                     plasma::Vector<3, Fixed> next(Fixed((*step)[0]) + Fixed(0.5f), Fixed((*step)[1]) + Fixed(0.5f),
                                                   Fixed((*step)[2]) + Fixed(state.size[2] * 0.5f));
-                    if (remaining >= 2 && !canWalk(state.size, state.position, next, PathStepRange, state.inSpiritWorld,
-                                                   state.binaryToggles))
+                    const plasma::Vector<3, float> direction(next - state.position);
+                    // Wait for a confirmed route before starting a detour that moves away from the goal.
+                    if (!complete && direction[0] * towardsGoal[0] + direction[1] * towardsGoal[1] < 0.0f)
                         continue;
-                    state.acceleration = next - state.position;
+                    const float horizontal = direction[0] * direction[0] + direction[1] * direction[1];
+                    // The walk probe checks only its first MaxWalkProbeDistance blocks.
+                    if (remaining >= 2 && (horizontal > MaxWalkProbeDistance * MaxWalkProbeDistance ||
+                                           !canWalk(state.size, state.position, next, PathStepRange,
+                                                    state.inSpiritWorld, state.binaryToggles)))
+                        continue;
+                    state.acceleration = direction;
                     if (m_world->getBlockAtDot(state.position[0], state.position[1], state.position[2]).type !=
                             BlockWater &&
                         state.position[2] < next[2])
@@ -1570,6 +1595,10 @@ void World::AIManager::updateCreature(Creature *creature, int milliseconds)
     }
     if (creature->m_entityData.binaryToggles.active)
         return;
+    if (creature->m_entityData.appearance.hasFlag(AppearanceFlagAquatic)) {
+        updateAquatic(creature, milliseconds);
+        return;
+    }
     if (!(creature->m_behaviours & BehaviourMirrorOwner) || !mirrorOwnerActions(creature, milliseconds)) {
         if ((unsigned char)(creature->m_entityData.hostilityType - HostilityAttackableObject) > 1) {
             if ((creature->m_behaviours & BehaviourSupportOwner) && checkSupport(creature, milliseconds))
@@ -1577,6 +1606,8 @@ void World::AIManager::updateCreature(Creature *creature, int milliseconds)
             if (!combat(creature, milliseconds)) {
                 if (creature->m_behaviours & BehaviourFollowOwner) {
                     escort(creature, milliseconds);
+                } else if (isTravelPartyMember(creature->m_id)) {
+                    travel(creature);
                 } else if (!watchOrGreetPlayer(creature, milliseconds) && !handleTarget(creature, milliseconds)) {
                     idle(creature, milliseconds);
                 }

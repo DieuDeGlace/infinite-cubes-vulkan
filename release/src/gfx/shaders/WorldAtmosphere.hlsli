@@ -2,28 +2,7 @@
 #ifndef WORLDATMOSPHERE_HLSLI
 #define WORLDATMOSPHERE_HLSLI
 
-#include "SkyParameters.hlsli"
-
-cbuffer FogDistance
-{
-    float fogScale;
-};
-
-cbuffer FogAngle
-{
-    float fogGradientTranslation;
-};
-
-cbuffer SunPos
-{
-    float4 sunPos;
-};
-
-cbuffer Alpha
-{
-    float alpha;
-};
-
+#include "WorldUniforms.hlsli"
 #include "Sky.hlsli"
 
 float fogAmount(float3 viewPosition)

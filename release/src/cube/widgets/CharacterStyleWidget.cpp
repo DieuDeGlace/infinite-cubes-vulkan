@@ -1,12 +1,12 @@
 // See cube/CharacterStyleWidget.h.
 #include "plasma/TextIds.h"
+#include <algorithm>
 #include <sstream>
 #include <vector>
 #include "cube/widgets/CharacterStyleWidget.h"
 #include "cube/Creature.h"
 #include "cube/Game.h"
 #include "cube/World.h"
-#include "plasma/D3D11Engine.h"
 #include "plasma/Display.h"
 #include "plasma/Engine.h"
 #include "plasma/Node.h"
@@ -18,6 +18,83 @@
 #include "plasma/EditFilter.h"
 
 namespace cube {
+
+namespace {
+
+constexpr int PaletteX = 13, PaletteY = 197, CellSize = 17;
+constexpr int Columns = 16, Shades = 7;
+
+plasma::Vector<4, float> paletteColor(int column, int shade)
+{
+    static const plasma::Vector<4, float> colors[Columns] = {
+        {1.0f, 0.0f, 0.0f, 1.0f}, {1.0f, 0.25f, 0.0f, 1.0f}, {1.0f, 0.5f, 0.0f, 1.0f}, {1.0f, 1.0f, 0.0f, 1.0f},
+        {0.5f, 1.0f, 0.0f, 1.0f}, {0.0f, 1.0f, 0.0f, 1.0f},  {0.0f, 1.0f, 0.5f, 1.0f}, {0.0f, 1.0f, 1.0f, 1.0f},
+        {0.0f, 0.5f, 1.0f, 1.0f}, {0.0f, 0.25f, 1.0f, 1.0f}, {0.0f, 0.0f, 1.0f, 1.0f}, {0.25f, 0.0f, 1.0f, 1.0f},
+        {0.5f, 0.0f, 1.0f, 1.0f}, {0.75f, 0.0f, 1.0f, 1.0f}, {1.0f, 0.0f, 1.0f, 1.0f}, {0.5f, 0.5f, 0.5f, 1.0f},
+    };
+    auto color = colors[column];
+    if (shade < 3) {
+        for (int c = 0; c < 3; ++c)
+            color[c] *= shade * 0.25f + 0.2f;
+    } else if (shade > 3) {
+        color += (plasma::Vector<4, float>(1, 1, 1, 1) - color) * ((shade - 3) * 0.25f);
+    }
+    return color;
+}
+
+plasma::Vector<3, unsigned char> hairColor(const plasma::Vector<4, float> &color)
+{
+    return {(unsigned char)(color[0] * 255), (unsigned char)(color[1] * 255), (unsigned char)(color[2] * 255)};
+}
+
+using HairColor = plasma::Vector<3, unsigned char>;
+
+plasma::Widget *makePalette(BaseWidget &parent, int top)
+{
+    auto *engine = parent.getEngine();
+    auto *shape = engine->createSmoothMeshShape(L"");
+    const float w = Columns * CellSize, h = Shades * CellSize;
+    shape->m_vertexPositions.resize(4);
+    shape->m_vertexPositions.value() = {{0, 0}, {w, 0}, {w, h}, {0, h}};
+    shape->m_vertexColors.resize(4);
+    shape->m_vertexColors.value().assign(4, {0, 0, 0, 0});
+    shape->setFaces({{0, 1, 2, 3}}, true);
+    shape->setSubdivisions(0, true);
+    shape->attributesChanged(true);
+    auto *node = engine->createNode(nullptr, shape, nullptr, parent.getNode(), L"");
+    node->transformation()->m_translation.value() = {PaletteX, float(top)};
+    node->transformation()->attributesChanged(true);
+    return engine->createWidget(node, L"");
+}
+
+bool pointedColor(BaseWidget &widget, int top, HairColor &color)
+{
+    const auto p = widget.getPointerOffset();
+    const float x = p[0] - PaletteX, y = p[1] - top;
+    if (x < 0 || y < 0 || x >= Columns * CellSize || y >= Shades * CellSize)
+        return false;
+    color = hairColor(paletteColor(int(x) / CellSize, int(y) / CellSize));
+    return true;
+}
+
+void drawPalette(BaseWidget &widget, int top, const HairColor &selected)
+{
+    auto *engine = widget.getEngine();
+    const auto origin =
+        widget.getNode()->transformation()->m_pivot.value() + plasma::Vector<2, float>(PaletteX, float(top));
+    engine->fillRectangle(origin, {Columns * CellSize, Shades * CellSize}, {0, 0, 0, 1});
+    for (int column = 0; column < Columns; ++column) {
+        for (int shade = 0; shade < Shades; ++shade) {
+            const auto swatch = paletteColor(column, shade);
+            const auto at = origin + plasma::Vector<2, float>(float(column * CellSize), float(shade * CellSize));
+            if (hairColor(swatch) == selected)
+                engine->fillRectangle(at, {CellSize, CellSize}, {1, 1, 1, 1});
+            engine->fillRectangle(at + plasma::Vector<2, float>(1, 1), {CellSize - 2, CellSize - 2}, swatch);
+        }
+    }
+}
+
+}
 
 CharacterStyleWidget::CharacterStyleWidget(Game *game, plasma::Node *node, plasma::Node *leftButton,
                                            plasma::Node *rightButton)
@@ -84,34 +161,8 @@ CharacterStyleWidget::CharacterStyleWidget(Game *game, plasma::Node *node, plasm
     m_haircutRightButton->connectWidget(L"rightbutton", plasma::WIDGET_EVENT_POINTER_PRESSED, this,
                                         &CharacterStyleWidget::increaseHaircut, true);
 
-    // The hair colour palette's hit area: an invisible 280 x 150 quad (four transparent vertices, one face, no
-    // subdivision) whose widget calls selectHairColor when pressed. Render draws the colours over it.
-    plasma::SmoothMeshShape *palette = m_engine->createSmoothMeshShape(L"");
-    palette->m_vertexPositions.resize(4);
-    palette->m_vertexColors.resize(4);
-    palette->m_vertexPositions.value()[0] = plasma::Vector<2, float>(0.0f, 0.0f);
-    palette->m_vertexPositions.value()[1] = plasma::Vector<2, float>(280.0f, 0.0f);
-    palette->m_vertexPositions.value()[2] = plasma::Vector<2, float>(280.0f, 150.0f);
-    palette->m_vertexPositions.value()[3] = plasma::Vector<2, float>(0.0f, 150.0f);
-    palette->m_vertexColors.value()[0] = plasma::Vector<4, float>(0.0f, 0.0f, 0.0f, 0.0f);
-    palette->m_vertexColors.value()[1] = plasma::Vector<4, float>(0.0f, 0.0f, 0.0f, 0.0f);
-    palette->m_vertexColors.value()[2] = plasma::Vector<4, float>(0.0f, 0.0f, 0.0f, 0.0f);
-    palette->m_vertexColors.value()[3] = plasma::Vector<4, float>(0.0f, 0.0f, 0.0f, 0.0f);
-    std::vector<std::vector<int>> faces;
-    faces.resize(1);
-    faces.back().push_back(0);
-    faces.back().push_back(1);
-    faces.back().push_back(2);
-    faces.back().push_back(3);
-    palette->setFaces(faces, true);
-    palette->setSubdivisions(0, true);
-    palette->attributesChanged(true);
-    plasma::Node *paletteNode = m_engine->createNode(nullptr, palette, nullptr, node, L"");
-    plasma::Widget *paletteWidget = m_engine->createWidget(paletteNode, L"");
-    paletteWidget->connect(plasma::WIDGET_EVENT_POINTER_PRESSED, this, &CharacterStyleWidget::selectHairColor, true,
-                           true);
-    paletteNode->transformation()->m_translation.value() = plasma::Vector<2, float>(10.0f, 200.0f);
-    paletteNode->transformation()->attributesChanged(true);
+    makePalette(*this, PaletteY)
+        ->connect(plasma::WIDGET_EVENT_POINTER_PRESSED, this, &CharacterStyleWidget::selectHairColor, true, true);
     setFont(L"resource1.dat");
 }
 
@@ -227,74 +278,16 @@ void CharacterStyleWidget::draw()
                                                                ? plasma::Vector<4, float>(0.0f, 1.0f, 1.0f, 1.0f)
                                                                : plasma::Vector<4, float>(1.0f, 1.0f, 1.0f, 1.0f);
 
-    text.str(L"");
-    text << L"Hair color";
     setTextFlags(1 << plasma::TEXT_CENTER);
-    renderText(text.str(), getContentWidth() * 0.5f, 182.0f);
+    renderText(L"Hair color", getContentWidth() * 0.5f, 182.0f);
+    drawPalette(*this, PaletteY, m_currentHairColor);
 
-    // The palette: 16 base colours in columns, each in 7 shades from dark (rows 0..2) through the colour itself (row
-    // 3) to white (rows 4..6), 17 pixels apart. The shade under the pointer becomes the preview colour; the creature
-    // is updated when it changed.
-    plasma::Vector<3, unsigned char> previousPreview = m_previewHairColor;
-    m_previewHairColor = m_currentHairColor;
-    std::vector<plasma::Vector<4, float>> baseColors;
-    baseColors.push_back(plasma::Vector<4, float>(1.0f, 0.0f, 0.0f, 1.0f));
-    baseColors.push_back(plasma::Vector<4, float>(1.0f, 0.25f, 0.0f, 1.0f));
-    baseColors.push_back(plasma::Vector<4, float>(1.0f, 0.5f, 0.0f, 1.0f));
-    baseColors.push_back(plasma::Vector<4, float>(1.0f, 1.0f, 0.0f, 1.0f));
-    baseColors.push_back(plasma::Vector<4, float>(0.5f, 1.0f, 0.0f, 1.0f));
-    baseColors.push_back(plasma::Vector<4, float>(0.0f, 1.0f, 0.0f, 1.0f));
-    baseColors.push_back(plasma::Vector<4, float>(0.0f, 1.0f, 0.5f, 1.0f));
-    baseColors.push_back(plasma::Vector<4, float>(0.0f, 1.0f, 1.0f, 1.0f));
-    baseColors.push_back(plasma::Vector<4, float>(0.0f, 0.5f, 1.0f, 1.0f));
-    baseColors.push_back(plasma::Vector<4, float>(0.0f, 0.25f, 1.0f, 1.0f));
-    baseColors.push_back(plasma::Vector<4, float>(0.0f, 0.0f, 1.0f, 1.0f));
-    baseColors.push_back(plasma::Vector<4, float>(0.25f, 0.0f, 1.0f, 1.0f));
-    baseColors.push_back(plasma::Vector<4, float>(0.5f, 0.0f, 1.0f, 1.0f));
-    baseColors.push_back(plasma::Vector<4, float>(0.75f, 0.0f, 1.0f, 1.0f));
-    baseColors.push_back(plasma::Vector<4, float>(1.0f, 0.0f, 1.0f, 1.0f));
-    baseColors.push_back(plasma::Vector<4, float>(0.5f, 0.5f, 0.5f, 1.0f));
-    int pointerX = (int)getPointerOffset()[0];
-    int pointerY = (int)getPointerOffset()[1];
-    // Read but then replaced by the identity: the squares are drawn unscaled.
-    plasma::Matrix<float> matrix;
-    m_engine->getModelViewMatrix(matrix);
-    matrix.identity();
-    int x = 13;
-    for (int column = 0; column < (int)baseColors.size(); column++) {
-        int shade = 0;
-        for (int y = 197; y < 316; y += 17) {
-            plasma::Vector<4, float> color = baseColors[column];
-            if (shade < 3) {
-                float brightness = shade * 0.25f + 0.2f;
-                color[0] *= brightness;
-                color[1] *= brightness;
-                color[2] *= brightness;
-            }
-            if (shade > 3) {
-                float whiteness = (shade - 3.0f) * 0.25f;
-                color += (plasma::Vector<4, float>(1.0f, 1.0f, 1.0f, 1.0f) - color) * whiteness;
-            }
-            plasma::Vector<2, float> &pivot = m_node->transformation()->m_pivot.value();
-            m_engine->fillRectangle(
-                plasma::Vector<2, float>((pivot[0] + x) * matrix.m_elements[0], (pivot[1] + y) * matrix.m_elements[0]),
-                plasma::Vector<2, float>(matrix.m_elements[0] * 17.0f, matrix.m_elements[0] * 17.0f),
-                plasma::Vector<4, float>(0.0f, 0.0f, 0.0f, 1.0f));
-            plasma::Vector<2, float> &inner = m_node->transformation()->m_pivot.value();
-            m_engine->fillRectangle(
-                plasma::Vector<2, float>((inner[0] + (x + 1)) * matrix.m_elements[0],
-                                         (inner[1] + (y + 1)) * matrix.m_elements[0]),
-                plasma::Vector<2, float>(matrix.m_elements[0] * 15.0f, matrix.m_elements[0] * 15.0f), color);
-            if (pointerX >= x && pointerY >= y && pointerX < x + 17 && pointerY < y + 17)
-                m_previewHairColor = plasma::Vector<3, unsigned char>((unsigned char)(color[0] * 255.0f),
-                                                                      (unsigned char)(color[1] * 255.0f),
-                                                                      (unsigned char)(color[2] * 255.0f));
-            shade++;
-        }
-        x += 17;
-    }
-    if (m_previewHairColor != previousPreview)
+    HairColor preview = m_currentHairColor;
+    pointedColor(*this, PaletteY, preview);
+    if (m_previewHairColor != preview) {
+        m_previewHairColor = preview;
         updateCreature(true);
+    }
 }
 
 void CharacterStyleWidget::decreaseClass()
@@ -315,9 +308,121 @@ void CharacterStyleWidget::increaseClass()
 
 void CharacterStyleWidget::selectHairColor()
 {
-    m_game->playSound(SoundMenuSelect);
-    m_currentHairColor = m_previewHairColor;
-    updateCreature(false);
+    if (pointedColor(*this, PaletteY, m_currentHairColor)) {
+        m_game->playSound(SoundMenuSelect);
+        commitHairColors();
+    }
+}
+
+void CharacterStyleWidget::commitHairColors()
+{
+    m_previewHairColor = m_currentHairColor;
+    m_previewTipColor = m_gradient.tips;
+    updateCreature(true);
+}
+
+SecondHairWidget::SecondHairWidget(CharacterStyleWidget &style, plasma::Node *node, plasma::Node *left,
+                                   plasma::Node *right)
+    : BaseWidget(style.getEngine(), node, L""),
+      m_style(style)
+{
+    using Handler = void (SecondHairWidget::*)();
+    const Handler decrease[] = {&SecondHairWidget::toggle, &SecondHairWidget::earlierStart,
+                                &SecondHairWidget::narrowerBlend};
+    const Handler increase[] = {&SecondHairWidget::toggle, &SecondHairWidget::laterStart,
+                                &SecondHairWidget::widerBlend};
+    auto arrow = [&](plasma::Node *button, const wchar_t *name, Handler handler) {
+        auto *copy = button->instance(node);
+        copy->makeTransformationUnique();
+        copy->makeDisplayUnique();
+        copy->connectWidget(name, plasma::WIDGET_EVENT_POINTER_PRESSED, this, handler, true);
+        return copy;
+    };
+    for (size_t i = 0; i < m_left.size(); ++i) {
+        m_left[i] = arrow(left, L"leftbutton", decrease[i]);
+        m_right[i] = arrow(right, L"rightbutton", increase[i]);
+    }
+    makePalette(*this, PaletteY)
+        ->connect(plasma::WIDGET_EVENT_POINTER_PRESSED, this, &SecondHairWidget::selectColor, true, true);
+    setFont(L"resource1.dat");
+    setTextStrokeRadius(3.0f);
+    setTextStrokeColor({0, 0, 0, 1});
+}
+
+void SecondHairWidget::resized()
+{
+    for (size_t i = 0; i < m_left.size(); ++i) {
+        const float y = 42.0f + 30.0f * i;
+        m_left[i]->widget()->moveTo(100.0f, y, true);
+        auto *right = m_right[i]->widget();
+        right->moveTo(viewWidth() - right->viewWidth() - 15.0f, y, true);
+    }
+}
+
+void SecondHairWidget::draw()
+{
+    const auto &gradient = m_style.m_gradient;
+    setTextFlags(0);
+    renderText(L"Dual-tone hair", 15.0f, 27.0f);
+    const wchar_t *labels[] = {L"Enabled", L"Start", L"Blend"};
+    const std::wstring values[] = {gradient.enabled ? L"On" : L"Off", std::to_wstring(gradient.start) + L"%",
+                                   std::to_wstring(gradient.blend) + L"%"};
+    for (size_t i = 0; i < m_left.size(); ++i) {
+        const float y = 57.0f + 30.0f * i;
+        setTextFlags(0);
+        renderText(labels[i], 15.0f, y);
+        setTextFlags(1 << plasma::TEXT_CENTER);
+        renderText(values[i], (getContentWidth() - 110.0f) * 0.5f + 100.0f, y);
+    }
+    renderText(L"Second color", getContentWidth() * 0.5f, 182.0f);
+    drawPalette(*this, PaletteY, gradient.tips);
+    HairColor preview = gradient.tips;
+    if (gradient.enabled)
+        pointedColor(*this, PaletteY, preview);
+    if (preview != m_style.m_previewTipColor) {
+        m_style.m_previewTipColor = preview;
+        m_style.updateCreature(true);
+    }
+}
+
+void SecondHairWidget::selectColor()
+{
+    if (pointedColor(*this, PaletteY, m_style.m_gradient.tips)) {
+        m_style.m_gradient.enabled = true;
+        m_style.m_game->playSound(SoundMenuSelect);
+        m_style.commitHairColors();
+    }
+}
+
+void SecondHairWidget::toggle()
+{
+    m_style.m_gradient.enabled = !m_style.m_gradient.enabled;
+    m_style.m_game->playSound(SoundMenuSelect);
+    m_style.commitHairColors();
+}
+
+void SecondHairWidget::adjustPercent(unsigned char &value, int step)
+{
+    value = (unsigned char)std::clamp(int(value) + step, 0, 100);
+    m_style.m_game->playSound(SoundMenuSelect);
+    m_style.commitHairColors();
+}
+
+void SecondHairWidget::earlierStart()
+{
+    adjustPercent(m_style.m_gradient.start, -5);
+}
+void SecondHairWidget::laterStart()
+{
+    adjustPercent(m_style.m_gradient.start, 5);
+}
+void SecondHairWidget::narrowerBlend()
+{
+    adjustPercent(m_style.m_gradient.blend, -5);
+}
+void SecondHairWidget::widerBlend()
+{
+    adjustPercent(m_style.m_gradient.blend, 5);
 }
 
 void CharacterStyleWidget::decreaseFace()
@@ -407,40 +512,55 @@ void CharacterStyleWidget::reset()
     m_face = 0;
     m_haircut = 0;
     m_currentHairColor = plasma::Vector<3, unsigned char>(0xff, 0xc8, 0x32);
-    m_previewHairColor = plasma::Vector<3, unsigned char>(0xff, 0xff, 0xff);
+    m_previewHairColor = m_currentHairColor;
+    m_gradient = {};
+    m_previewTipColor = m_gradient.tips;
 }
 
 void CharacterStyleWidget::updateCreature(bool preview)
 {
     m_game->m_world->enterZoneMeshes();
+    Creature *creature = m_game->m_world->m_localCreature;
+    auto &player = *creature->m_playerData;
+    player.hairColor = m_previewHairColor;
+    player.hairGradient = m_gradient;
+    player.hairGradient.tips = m_previewTipColor;
+    if (preview) {
+        // Frogman markings retain their native tint in single-color mode.
+        if (m_race != CharacterRaceChoiceFrogman)
+            creature->m_entityData.appearance.hairColor = player.hairColor;
+        m_game->m_world->leaveZoneMeshes();
+        return;
+    }
+
     // The creature race of the chosen race and gender (male, female).
     switch (m_race) {
     case CharacterRaceChoiceHuman:
-        m_game->m_world->m_localCreature->m_entityData.race = m_gender + RaceHumanMale;
+        creature->m_entityData.race = m_gender + RaceHumanMale;
         break;
     case CharacterRaceChoiceElf:
-        m_game->m_world->m_localCreature->m_entityData.race = m_gender;
+        creature->m_entityData.race = m_gender;
         break;
     case CharacterRaceChoiceDwarf:
-        m_game->m_world->m_localCreature->m_entityData.race = m_gender + RaceDwarfMale;
+        creature->m_entityData.race = m_gender + RaceDwarfMale;
         break;
     case CharacterRaceChoiceOrc:
-        m_game->m_world->m_localCreature->m_entityData.race = m_gender + RaceOrcMale;
+        creature->m_entityData.race = m_gender + RaceOrcMale;
         break;
     case CharacterRaceChoiceGoblin:
-        m_game->m_world->m_localCreature->m_entityData.race = m_gender + RaceGoblinMale;
+        creature->m_entityData.race = m_gender + RaceGoblinMale;
         break;
     case CharacterRaceChoiceLizard:
-        m_game->m_world->m_localCreature->m_entityData.race = m_gender + RaceLizardmanMale;
+        creature->m_entityData.race = m_gender + RaceLizardmanMale;
         break;
     case CharacterRaceChoiceUndead:
-        m_game->m_world->m_localCreature->m_entityData.race = m_gender + RaceUndeadMale;
+        creature->m_entityData.race = m_gender + RaceUndeadMale;
         break;
     case CharacterRaceChoiceFrogman:
-        m_game->m_world->m_localCreature->m_entityData.race = m_gender + RaceFrogmanMale;
+        creature->m_entityData.race = m_gender + RaceFrogmanMale;
         break;
     }
-    m_game->m_world->m_localCreature->m_entityData.classType = m_classType + 1;
+    creature->m_entityData.classType = m_classType + 1;
 
     // The model ranges of the creature race: faces firstFace..lastFace, haircuts firstHaircut..lastHaircut; the
     // choices wrap around them.
@@ -448,7 +568,7 @@ void CharacterStyleWidget::updateCreature(bool preview)
     int lastFace = SpriteHumanHeadM06;
     int firstHaircut = SpriteHumanHairM01;
     int lastHaircut = SpriteHumanHairM15;
-    switch (m_game->m_world->m_localCreature->m_entityData.race) {
+    switch (creature->m_entityData.race) {
     case RaceElfMale:
         firstFace = SpriteElfHeadM01;
         lastFace = SpriteElfHeadM04;
@@ -553,14 +673,11 @@ void CharacterStyleWidget::updateCreature(bool preview)
             m_haircut = 0;
     }
 
-    m_game->m_world->m_localCreature->m_playerData->face = m_face;
-    m_game->m_world->m_localCreature->m_playerData->haircut = m_haircut;
-    // Always the preview colour: the parameter is not read.
-    m_game->m_world->m_localCreature->m_playerData->hairColor = m_previewHairColor;
-    m_game->m_world->m_localCreature->m_playerData->race = m_race;
-    m_game->m_world->m_localCreature->m_playerData->gender = m_gender;
-    m_game->m_world->m_localCreature->m_entityData.appearance = Creature::EntityData::Appearance();
-    Creature *creature = m_game->m_world->m_localCreature;
+    player.face = m_face;
+    player.haircut = m_haircut;
+    player.race = m_race;
+    player.gender = m_gender;
+    creature->m_entityData.appearance = Creature::EntityData::Appearance();
     fillAppearance(creature->m_entityData.race, creature->m_entityData.appearance, creature->m_playerData, false);
     m_game->equipNewCharacter();
     m_game->m_world->leaveZoneMeshes();

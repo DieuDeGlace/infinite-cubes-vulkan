@@ -1,5 +1,6 @@
-#include <algorithm>
 #include "cube/Creature.h"
+#include "cube/Progression.h"
+#include "cube/Sprite.h"
 
 #include <algorithm>
 #include <cstdlib>
@@ -15,6 +16,75 @@
 #include "cube/SpriteIds.h"
 
 namespace cube {
+
+struct Creature::HairMesh {
+    HairMesh(Sprite &model, const std::array<unsigned char, 8> &key)
+        : source(&model),
+          colors(key),
+          sprite(*model.m_graphics, model.m_fullIntensity)
+    {}
+
+    Sprite *source;
+    std::array<unsigned char, 8> colors;
+    Sprite sprite;
+};
+
+Sprite *Creature::styledHair(Sprite *source)
+{
+    if (!source || !m_playerData || !m_playerData->hairGradient.enabled)
+        return source;
+
+    const auto &roots = m_playerData->hairColor;
+    const auto &gradient = m_playerData->hairGradient;
+    const auto &tips = gradient.tips;
+    const std::array<unsigned char, 8> colors {roots[0], roots[1], roots[2],       tips[0],
+                                               tips[1],  tips[2],  gradient.start, gradient.blend};
+    if (m_hairMesh && m_hairMesh->source == source && m_hairMesh->colors == colors)
+        return &m_hairMesh->sprite;
+
+    auto mesh = std::make_unique<HairMesh>(*source, colors);
+    Sprite &hair = mesh->sprite;
+    hair.m_showMarkers = false;
+    hair.m_shadingRadius = source->m_shadingRadius;
+    hair.setTint(source->m_tint);
+    hair.setVoxels(source->sizeX(), source->sizeY(), source->sizeZ(), source->m_voxels, false, true);
+    const auto dyeable = [](const plasma::Vector<3, unsigned char> &rgb) {
+        const int high = std::max({rgb[0], rgb[1], rgb[2]});
+        return high > 0 && high - std::min({rgb[0], rgb[1], rgb[2]}) <= 12;
+    };
+    int bottom = hair.sizeZ(), top = -1;
+    const int plane = hair.sizeX() * hair.sizeY();
+    for (int z = 0; z < hair.sizeZ(); ++z) {
+        for (int i = 0; i < plane; ++i) {
+            if (dyeable(hair.m_voxels[z * plane + i])) {
+                bottom = std::min(bottom, z);
+                top = z;
+                break;
+            }
+        }
+    }
+    for (int z = bottom; z <= top; ++z) {
+        const float depth = 100.0f * (top - z) / std::max(1, top - bottom);
+        float mix = depth >= gradient.start ? 1.0f : 0.0f;
+        if (gradient.blend) {
+            const float t = std::clamp((depth - gradient.start) / gradient.blend, 0.0f, 1.0f);
+            mix = t * t * (3.0f - 2.0f * t);
+        }
+        for (int i = 0; i < plane; ++i) {
+            auto &rgb = hair.m_voxels[z * plane + i];
+            if (dyeable(rgb)) {
+                for (int c = 0; c < 3; ++c) {
+                    const float tint = roots[c] + (tips[c] - roots[c]) * mix;
+                    rgb[c] = (unsigned char)std::clamp(int(rgb[c] * tint / 255.0f + 0.5f), 1, 254);
+                }
+            }
+        }
+    }
+    hair.updateMesh(0);
+    hair.finalize();
+    m_hairMesh = std::move(mesh);
+    return &m_hairMesh->sprite;
+}
 
 Creature::Creature(const long long &id)
     : m_id(id),
@@ -405,6 +475,12 @@ float Creature::armor()
     if (buff) {
         armor *= buff->strength;
     }
+    if (m_pyroProgression) {
+        if (m_entityData.hostilityType == HostilityPlayer)
+            armor += 0.2f * (m_entityData.progressionLevel - 1);
+        else if (m_entityData.hostilityType == HostilityEnemy)
+            armor *= 0.0505f * progression::creatureScale(m_entityData.progressionLevel);
+    }
     return armor;
 }
 
@@ -455,6 +531,12 @@ float Creature::attackPower(bool allWeapons)
     }
     if (appearance.appearanceFlags & AppearanceFlagPromotedResident) {
         power *= 1.1f;
+    }
+    if (m_pyroProgression) {
+        if (m_entityData.hostilityType == HostilityPlayer)
+            power += 0.2f * (m_entityData.progressionLevel - 1);
+        else if (m_entityData.hostilityType == HostilityEnemy)
+            power *= 0.2f * progression::creatureScale(m_entityData.progressionLevel);
     }
     return power;
 }
@@ -575,7 +657,7 @@ bool Creature::canBeDamaged()
 {
     unsigned char hostility = m_entityData.hostilityType;
     return hostility == HostilityPlayer || hostility == HostilityEnemy || hostility == HostilityFriendlyNpc ||
-           hostility == HostilityPet ||
+           m_entityData.appearance.hasFlag(AppearanceFlagAquatic) || hostility == HostilityPet ||
            (hostility == HostilityAttackableObject &&
             !(m_entityData.race >= RaceScarecrow && m_entityData.race <= RaceDummy));
 }
@@ -614,7 +696,8 @@ bool Creature::canEquipItem(const Item &item)
     if (m_entityData.hostilityType != HostilityPlayer) {
         return true;
     }
-    return item.fitsClass(m_entityData.classType) ? true : false;
+    return item.fitsClass(m_entityData.classType) &&
+           (!m_pyroProgression || item.gearLevel() <= m_entityData.progressionLevel);
 }
 
 bool Creature::canTakeItem(const Item &item)
@@ -753,6 +836,8 @@ int Creature::cooldown(int skill)
 float Creature::critical(Creature *otherCreature, bool otherCreatureBasedOnResistance)
 {
     float chance = m_entityData.stealth * 0.5f + 0.0f;
+    if (m_pyroProgression && m_entityData.hostilityType == HostilityPlayer)
+        chance += 0.0001f * (m_entityData.progressionLevel - 1);
     if (m_entityData.currentAbility == AbilityAssassinate && attackDuration() > m_entityData.timeSinceAbility) {
         chance += 0.5f;
     }
@@ -5605,6 +5690,12 @@ float Creature::maxHP()
     if (m_entityData.appearance.appearanceFlags & AppearanceFlagPromotedResident) {
         hp *= 1.1f;
     }
+    if (m_pyroProgression) {
+        if (m_entityData.hostilityType == HostilityPlayer)
+            hp += m_entityData.progressionLevel - 1;
+        else if (m_entityData.hostilityType == HostilityEnemy)
+            hp *= 0.15f * progression::creatureScale(m_entityData.progressionLevel);
+    }
     return hp;
 }
 
@@ -6302,6 +6393,8 @@ float Creature::resistance()
     if (buff) {
         resistance *= buff->strength;
     }
+    if (m_pyroProgression && m_entityData.hostilityType == HostilityEnemy)
+        resistance *= 0.0505f * progression::creatureScale(m_entityData.progressionLevel);
     return resistance;
 }
 
@@ -7031,6 +7124,12 @@ float Creature::spellPower(bool allWeapons)
     if (appearance.appearanceFlags & AppearanceFlagPromotedResident) {
         power *= 1.1f;
     }
+    if (m_pyroProgression) {
+        if (m_entityData.hostilityType == HostilityPlayer)
+            power += 0.2f * (m_entityData.progressionLevel - 1);
+        else if (m_entityData.hostilityType == HostilityEnemy)
+            power *= 0.2f * progression::creatureScale(m_entityData.progressionLevel);
+    }
     return power;
 }
 
@@ -7295,13 +7394,35 @@ float Creature::tempo()
     return tempo;
 }
 
-int Creature::totalXP()
+long long Creature::totalXP()
 {
+    if (m_pyroProgression) {
+        const long long completed = m_entityData.progressionLevel - 1;
+        return completed * (54 + 2 * (completed - 1)) + m_entityData.xp;
+    }
     int total = 0;
     for (int level = 1; level < m_entityData.level; level++) {
         total += (int)(pow(2.0, (level - 1) * 0.5f) * 10.0);
     }
     return total + m_entityData.xp;
+}
+
+bool Creature::awardExperience(int xp)
+{
+    auto &data = m_entityData;
+    if (!m_pyroProgression || xp <= 0 || data.progressionLevel >= progression::MaxLevel)
+        return false;
+    const int oldLevel = data.progressionLevel;
+    data.xp = std::clamp(data.xp, 0, progression::xpToNext(data.progressionLevel) - 1) + std::min(xp, 1'000'000);
+    while (data.progressionLevel < progression::MaxLevel && data.xp >= progression::xpToNext(data.progressionLevel)) {
+        data.xp -= progression::xpToNext(data.progressionLevel);
+        ++data.progressionLevel;
+    }
+    if (data.progressionLevel == progression::MaxLevel)
+        data.xp = 0;
+    if (data.progressionLevel > oldLevel && data.hp > 0.0f)
+        data.hp = maxHP();
+    return true;
 }
 
 void Creature::updateLevelAndSkills()

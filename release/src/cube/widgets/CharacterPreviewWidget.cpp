@@ -6,8 +6,8 @@
 #include "cube/Game.h"
 #include "cube/World.h"
 #include "cube/World.h"
-#include "gfx/D3D11Renderer.h"
-#include "plasma/D3D11Engine.h"
+#include "gfx/Renderer.h"
+#include "plasma/Engine.h"
 #include "plasma/Engine.h"
 #include "plasma/Node.h"
 #include "cube/CreatureIds.h"
@@ -82,7 +82,7 @@ void CharacterPreviewWidget::draw()
 
     // Level, race and class.
     text.str(L"");
-    text << L"LV " << m_creature->m_entityData.level;
+    text << L"LV " << m_creature->displayLevel();
     text << " ";
     switch (m_creature->m_entityData.race) {
     case RaceHumanMale:

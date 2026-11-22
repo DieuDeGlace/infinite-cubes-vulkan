@@ -239,11 +239,13 @@ struct IXAudio2 : IUnknown {
 
 // The 2.7 engine's COM classes and interface.
 static const CLSID CLSID_XAudio2_7 = {0x5a508685, 0xa254, 0x4fba, {0x9b, 0x82, 0x9a, 0x24, 0xb0, 0x03, 0x06, 0xaf}};
-static const CLSID CLSID_XAudio2_7_Debug = {0xdb05ea35, 0x0329, 0x4d4b, {0xa5, 0x3a, 0x6d, 0xea, 0xd0, 0x3d, 0x38, 0x52}};
+static const CLSID CLSID_XAudio2_7_Debug = {
+    0xdb05ea35, 0x0329, 0x4d4b, {0xa5, 0x3a, 0x6d, 0xea, 0xd0, 0x3d, 0x38, 0x52}};
 static const IID IID_IXAudio2_7 = {0x8bcf1f58, 0x9fe7, 0x4583, {0x8a, 0xc6, 0xe2, 0xad, 0xc4, 0x65, 0xc8, 0xbb}};
 
 // Creates and initializes the engine as the SDK's XAudio2Create does. COM must be initialized on the thread.
-inline HRESULT XAudio2Create(IXAudio2 **xaudio2, UINT32 flags = 0, XAUDIO2_PROCESSOR processor = XAUDIO2_DEFAULT_PROCESSOR)
+inline HRESULT XAudio2Create(IXAudio2 **xaudio2, UINT32 flags = 0,
+                             XAUDIO2_PROCESSOR processor = XAUDIO2_DEFAULT_PROCESSOR)
 {
     IXAudio2 *engine;
     HRESULT result = CoCreateInstance((flags & XAUDIO2_DEBUG_ENGINE) ? CLSID_XAudio2_7_Debug : CLSID_XAudio2_7, NULL,

@@ -124,11 +124,13 @@ target_include_directories(pugixml PUBLIC thirdparty/pugixml/src)
 target_include_directories(pugixml PRIVATE thirdparty/libogg/include thirdparty/libvorbis/include thirdparty/libvorbis/lib)
 target_compile_definitions(pugixml PUBLIC PUGIXML_WCHAR_MODE)
 include(cmake/FreeImage.cmake)
+add_subdirectory(thirdparty/alphavulkan)
 file(GLOB_RECURSE GAME_SOURCES CONFIGURE_DEPENDS src/*.cpp plasma/src/*.cpp)
 add_executable(cubeworld WIN32 ${GAME_SOURCES} platform/FreeImageRuntime.cpp)
 target_include_directories(cubeworld PRIVATE include plasma/include thirdparty/steamworks)
 target_compile_definitions(cubeworld PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN _WIN32_WINNT=0x0602 DIRECTINPUT_VERSION=0x0800 _CRT_SECURE_NO_WARNINGS)
-target_link_libraries(cubeworld PRIVATE pugixml sqlite vorbisfile libvorbis libogg zlib freetype FreeImage d3d11 dinput8 dxguid xinput winmm ws2_32 glu32 gdi32 ole32 shell32)
+target_link_libraries(cubeworld PRIVATE pugixml sqlite vorbisfile libvorbis libogg zlib freetype FreeImage dinput8 dxguid xinput winmm ws2_32 glu32 gdi32 ole32 shell32)
+target_link_libraries(cubeworld PRIVATE alphavulkan)
 set(STEAMWORKS_SDK "" CACHE PATH "Steamworks SDK root; empty builds local offline mode")
 if(STEAMWORKS_SDK)
   target_link_libraries(cubeworld PRIVATE "${STEAMWORKS_SDK}/redistributable_bin/win64/steam_api64.lib")
@@ -142,7 +144,17 @@ else()
   target_compile_options(cubeworld PRIVATE /std:c++17 /bigobj /EHsc)
 endif()
 
-include(cmake/Shaders.cmake)
+include(cmake/Vulkan.cmake)
+
+set(quest_icon_atlas "${CMAKE_CURRENT_SOURCE_DIR}/thirdparty/overworldevents/quest-icons.png")
+set(quest_icon_script "${CMAKE_CURRENT_SOURCE_DIR}/cmake/EmbedQuestIcons.py")
+set(quest_icon_header "${CMAKE_CURRENT_BINARY_DIR}/generated/QuestIconPng.h")
+add_custom_command(OUTPUT "${quest_icon_header}"
+  COMMAND "${Python3_EXECUTABLE}" "${quest_icon_script}" "${quest_icon_atlas}" "${quest_icon_header}"
+  DEPENDS "${quest_icon_script}" "${quest_icon_atlas}"
+  VERBATIM)
+target_sources(cubeworld PRIVATE "${quest_icon_header}")
+set_property(SOURCE src/gfx/VulkanRenderer.cpp APPEND PROPERTY INCLUDE_DIRECTORIES "${FI}/Source")
 # XAudio2 2.8 (Windows 8 and later), the version the game was written for.
 target_link_libraries(cubeworld PRIVATE xaudio2_8)
 if(MINGW)

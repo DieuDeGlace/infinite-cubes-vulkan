@@ -5,7 +5,7 @@
 #include "cube/widgets/HelpWidget.h"
 #include "cube/Speech.h"
 #include "cube/World.h"
-#include "plasma/D3D11Engine.h"
+#include "plasma/Engine.h"
 #include "plasma/Node.h"
 #include "plasma/Transformation.h"
 #include "cube/CreatureIds.h"

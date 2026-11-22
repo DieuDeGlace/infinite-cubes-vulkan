@@ -6,7 +6,7 @@
 #include "cube/Creature.h"
 #include "cube/Game.h"
 #include "cube/World.h"
-#include "plasma/D3D11Engine.h"
+#include "plasma/Engine.h"
 #include "plasma/Engine.h"
 #include "plasma/Node.h"
 #include "cube/CreatureIds.h"
@@ -37,7 +37,7 @@ void CharacterWidget::draw()
     std::wstringstream text;
     setTextColor(plasma::Vector<4, float>(1.0f, 1.0f, 1.0f, 1.0f));
     Creature *creature = m_game->m_world->m_localCreature;
-    text << L"LEVEL " << creature->m_entityData.level;
+    text << L"LEVEL " << creature->displayLevel();
     renderText(text.str(), 0.0f, 24.0f);
 
     // Weapon level: the rarity of the weapons in use as stars (two weapons are averaged unless one is two-handed),

@@ -5,8 +5,8 @@
 #include "cube/Sprite.h"
 #include "cube/widgets/SpriteWidget.h"
 #include "cube/World.h"
-#include "gfx/D3D11Renderer.h"
-#include "plasma/D3D11Engine.h"
+#include "gfx/Renderer.h"
+#include "plasma/Engine.h"
 #include "plasma/Node.h"
 #include "plasma/EditFilter.h"
 

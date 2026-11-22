@@ -50,8 +50,8 @@ public:
 protected:
     friend class Node;                            // registers itself in m_nodes; reads m_flags
     friend class Engine;                          // erases m_engineEntry when deleting the display
-    friend class D3D11Engine;                     // reads m_flags
-    friend class D3D11Drawing;                    // reads m_flags
+    friend class VulkanEngine;                     // reads m_flags
+    friend class VulkanDrawing;                    // reads m_flags
     int m_flags;                                  // DisplayFlags; zeroed by the constructor, copied by Clone
     std::set<Node *> m_nodes;                     // the nodes that use this display
     std::list<Display *>::iterator m_engineEntry; // Registration entry in the engine's display list.

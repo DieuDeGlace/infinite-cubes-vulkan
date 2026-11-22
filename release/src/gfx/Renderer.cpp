@@ -9,6 +9,7 @@
 #include <algorithm>
 #include <utility>
 #include "gfx/Renderer.h"
+#include "gfx/AlphaLighting.h"
 #include "gfx/ByteGrid.h"
 #include "gfx/Graphics.h"
 #include "gfx/IndexBuffer.h"
@@ -64,9 +65,9 @@ static const float MapFogDistance = 20000.0f;
 static const float ParticleMinimumBlockLight = 0.2f;
 static const float MusicNoteParticleScale = 0.03f;
 static const float MeshBudgetVisibilityRange = 100000.0f;
-static const float WaterAlphaRecoveryRate = 0.05f;
 static const float SunOrbitHorizontalAmplitude = -0.4f;
-static const float UnderwaterMaximumFogDistance = 150.0f;
+// Omega's underwater view fades into its fog colour within a few dozen blocks.
+static const float UnderwaterMaximumFogDistance = 48.0f;
 static const float NightSkyDaylightCutoff = 0.5f;
 static const float UndeadDaylightReduction = 0.75f;
 static const float StarFieldFogDistance = 100000.0f;
@@ -84,10 +85,15 @@ static const float MagicBarrierOpacity = 0.75f;
 static const float InactiveMagicBarrierOpacityGain = 0.2f;
 static const float RuneGateShellLift = 0.01f;
 static const float RuneGateShellWidthGain = 1.05f;
-static const float CloudLatticeSpacing = 200.0f;
-static const int CloudLatticeSpacingBlocks = 200;
-static const int CloudLatticeStaggerBlocks = 100;
-static const int CloudSearchMargin = 2;
+static const int CloudLatticeSpacing = 200;
+// The cloud layer keeps its own range above the terrain fog, so a short render distance (phones) does not shrink the
+// sky to a few clouds overhead.
+static const float CloudMinimumFogDistance = 900.0f;
+// Added to a lattice cell's humidity before the cloud test. The original game only clouds very humid land; Omega's
+// skies carry clouds over ordinary grassland as well.
+static const float CloudCoverage = 0.2f;
+static const double CloudWindSpeed = 0.0012;    // Blocks per millisecond.
+static const double CloudCellLifetime = 2000.0; // Milliseconds.
 static const float CloudVisibilityRadius = 250.0f;
 static const float CloudVisibilityMargin = 200.0f;
 static const float CloudNearFadeOuterRadius = 180.0f;
@@ -102,7 +108,8 @@ static const int FlightPointHighlightRadius = 2048;
 static const int TriangleBudgetMultiplier = 3;
 static const int TriangleBudgetShift = 12;
 static const float ViewDistanceSafetyInset = 44.8f;
-static const float MinimumViewDistance = 0.001f;
+// Keep nearby meshes visible while the camera is next to an unfinished zone.
+static const float MinimumViewDistance = cube::BlocksPerZone * 0.5f;
 static const float EagleFlightViewDelayMs = 1000.0f;
 static const float EagleFlightMinimumViewDistance = 64.0f;
 static const float EagleFlightViewBlendRate = 0.005f;
@@ -192,12 +199,12 @@ static inline plasma::Vector<3, float> center(cube::Sprite *sprite)
 void rotateTowards(plasma::Matrix<float> &matrix, const plasma::Vector<3, float> &from,
                    const plasma::Vector<3, float> &to);
 
-Renderer::Renderer(cube::World *world, cube::WorldMap *worldMap)
-    : m_world(world),
+Renderer::Renderer(cube::World *world, cube::WorldMap *worldMap, bool alphaLighting)
+    : m_alphaLighting(alphaLighting),
+      m_world(world),
       m_worldMap(worldMap),
       m_zoneRadius(0),
-      m_viewDistance(0.0f),
-      m_waterAlpha(1.0f),
+      m_viewDistance(MinimumViewDistance),
       m_skyColors {plasma::Vector<4, float>(0.0f, 0.0f, 1.0f, 1.0f), plasma::Vector<4, float>(0.0f, 0.0f, 1.0f, 1.0f),
                    plasma::Vector<4, float>(0.0f, 0.0f, 1.0f, 1.0f), plasma::Vector<4, float>(0.0f, 0.0f, 0.0f, 0.0f)},
       // Initial lighting palette: cool ambient, warm front light and neutral back light (RGBA).
@@ -220,6 +227,12 @@ static inline float brightness(Vertex vertex)
 // Appends the two triangles of the quad that the last four vertices form, split along the diagonal whose two ends
 // differ less in brightness, so that the smooth shading does not show the other diagonal. The zone mesher calls it
 // after the four vertices of each face.
+// Leaf blocks, whose faces move with the wind (Vertex::FoliageFace).
+static bool isFoliage(int type)
+{
+    return type == cube::BlockLeaves || type == cube::BlockSnowLeaves;
+}
+
 void addQuad(std::vector<unsigned int> &indices, const std::vector<Vertex> &vertices)
 {
     int count = (int)vertices.size();
@@ -267,16 +280,12 @@ float Renderer::attenuation(const plasma::Vector<3, cube::Fixed> &position, floa
 
 bool Renderer::canMesh(int x, int y)
 {
-    m_world->enterZones();
     for (int dx = -1; dx <= 1; dx++) {
         for (int dy = -1; dy <= 1; dy++) {
-            if (!m_world->zone(x + dx, y + dy)) {
-                m_world->leaveZones();
+            if (!m_world->zone(x + dx, y + dy))
                 return false;
-            }
         }
     }
-    m_world->leaveZones();
     return true;
 }
 
@@ -886,6 +895,37 @@ void Renderer::collectLights(std::list<cube::Light> &lights)
     }
 }
 
+void Renderer::collectWaterLilies(const cube::Zone &zone)
+{
+    constexpr float LilyScale = 0.09f;
+    constexpr float WaterSurfaceOffset = 0.1f;
+    for (const ChunkBuffer *buffer : zone.m_chunk.chunkBuffers) {
+        for (const WaterLily &lily : buffer->waterLilies) {
+            cube::Sprite *sprite = m_world->m_spriteManager->decorationSprite(
+                lily.secondModel ? cube::PlantWaterLily02 : cube::PlantWaterLily01);
+            if (!sprite)
+                continue;
+
+            const plasma::Vector<3, cube::Fixed> position(cube::Fixed(lily.x) + 0.5, cube::Fixed(lily.y) + 0.5,
+                                                          cube::Fixed(lily.surfaceZ) + WaterSurfaceOffset);
+            const auto center = raised(position, float(sprite->sizeZ()) * LilyScale * 0.5f);
+            const float radius = float(std::max(sprite->sizeX(), sprite->sizeY())) * LilyScale;
+            if (!isSphereVisible(center, radius, m_effectViewDistance))
+                continue;
+
+            plasma::Matrix<float> model;
+            model.identity();
+            model.translate(float(position[0] + m_drawOriginX), float(position[1] + m_drawOriginY), float(position[2]));
+            model.scale(LilyScale, LilyScale, LilyScale);
+            model.rotateZ(lily.rotation);
+            model.translate(float(sprite->sizeX()) * -0.5f, float(sprite->sizeY()) * -0.5f, 0.0f);
+            auto color = m_tint;
+            color[3] *= lily.daylight / 255.0f;
+            m_worldBatch.add(sprite, model, color, attenuation(center, m_effectViewDistance), 0.0f, 0.0f, 0.0f, 0.0f);
+        }
+    }
+}
+
 // The header describes what is collected.
 void Renderer::collectSprites(const plasma::Vector<3, int> &lookedAt, int flags)
 {
@@ -934,6 +974,9 @@ void Renderer::collectSprites(const plasma::Vector<3, int> &lookedAt, int flags)
                 if (!((m_effectViewDistance + ZoneCullMarginBlocks) * (m_effectViewDistance + ZoneCullMarginBlocks) >
                       zone->m_chunk.squaredCameraDistance))
                     continue;
+
+                if (flags & RenderFlagWaterLilies)
+                    collectWaterLilies(*zone);
 
                 int index = 0;
                 for (cube::Zone::Plant &plant : zone->m_plants) {
@@ -1957,14 +2000,12 @@ void Renderer::collectSprites(const plasma::Vector<3, int> &lookedAt, int flags)
         color = plasma::Vector<4, float>(1.0f, 1.0f, 1.0f, 1.0f);
         cube::Sprite *sign = nullptr;
         unsigned char classType = creature->m_entityData.classType;
+        const bool questGiver = classType == cube::ClassGuildReceptionist || classType == cube::Class_139 ||
+                                std::binary_search(m_townQuestGivers.begin(), m_townQuestGivers.end(), creature->m_id);
         if (classType >= cube::ClassItemVendor && classType <= cube::ClassArmorVendor)
             sign = m_world->m_spriteManager->sprite(cube::SpriteIconVendor);
-        if (classType == cube::ClassGuildReceptionist)
-            sign = m_world->m_spriteManager->sprite(cube::SpriteMission);
         if (classType == cube::ClassAnalyzer)
             sign = m_world->m_spriteManager->sprite(cube::SpriteIconAnalyze);
-        if (classType == cube::Class_139)
-            sign = m_world->m_spriteManager->sprite(cube::SpriteMission);
         if (m_worldMap->isMarked(creature)) {
             sign = m_world->m_spriteManager->sprite(cube::SpriteQuestTarget);
             if (creature->m_id == m_worldMap->m_markedCreatureId)
@@ -2017,6 +2058,11 @@ void Renderer::collectSprites(const plasma::Vector<3, int> &lookedAt, int flags)
             model.scale(scale, scale, scale);
             model.translate((float)sign->sizeX() * -0.5f, (float)sign->sizeY() * -0.5f, (float)sign->sizeZ() * -0.5f);
             m_worldBatch.add(sign, model, color, 1.0f, 1.0f, 0.0f, 0.0f, 0.0f);
+        } else if (questGiver && creature->m_entityData.hp > 0.0f && !(flags & RenderFlagOnlyPlayer)) {
+            const cube::Fixed height(creature->m_entityData.appearance.size[2] * 0.5f + 1.0f - creature->m_stepOffset);
+            const plasma::Vector<3, float> anchor(creature->m_drawnPosition +
+                                                  plasma::Vector<3, cube::Fixed>(m_drawOriginX, m_drawOriginY, height));
+            m_worldQuestMarkers.push_back({anchor, QuestIcon::Giver});
         }
     }
 
@@ -3134,9 +3180,7 @@ void Renderer::renderChunks(const plasma::Vector<4, float> &frontColor, const pl
     }
 }
 
-void Renderer::renderClouds(const plasma::Vector<4, float> &skyColor1, const plasma::Vector<4, float> &skyColor2,
-                            const plasma::Vector<4, float> &frontColor, const plasma::Vector<4, float> &backColor,
-                            const plasma::Vector<3, float> &direction, const plasma::Vector<4, float> &ambientColor)
+void Renderer::renderClouds(const plasma::Vector<3, float> &direction)
 {
     // A cloud near the camera, drawn after the others with its alpha.
     struct Cloud {
@@ -3145,44 +3189,71 @@ void Renderer::renderClouds(const plasma::Vector<4, float> &skyColor1, const pla
         cube::Sprite *sprite;
     };
 
+    // Terrain streaming can bring the ground fog closer than the cloud layer.
+    const float fogDistance = (std::max)(m_viewDistance, CloudMinimumFogDistance);
+    const float drawDistance = fogDistance + CloudVisibilityMargin;
+    const int reach = int(std::ceil(drawDistance / CloudLatticeSpacing));
+    const cube::Fixed drift(m_cloudTime * CloudWindSpeed);
+    // Search in the moving lattice so the same cells keep their shape and altitude as they pass the camera.
+    const cube::Fixed cameraX = m_cameraPosition[0] - drift;
+    const int centerX = cube::floorDivide(cameraX.toBlock(), CloudLatticeSpacing);
+    const int cameraY = m_cameraPosition[1].toBlock();
+    const float squaredDrawDistance = drawDistance * drawDistance;
+
     activateMode(RendererMode_Clouds);
     setWhite(0.0f);
     setGlow(0.0f);
     clearPointLights();
+    setFogScale(fogDistance);
+    setLight(m_lightFrontColor, m_lightBackColor, direction, m_ambientColor);
     setMaterialColor(plasma::Vector<4, float>(1.0f, 1.0f, 1.0f, 1.0f));
     setViewMatrix(m_viewMatrix);
     setProjectionMatrix(m_projectionMatrix);
     std::list<Cloud> nearClouds;
     setAlpha(1.0f);
-    for (int i = -CloudSearchMargin - (int)(m_viewDistance / CloudLatticeSpacing);
-         i <= CloudSearchMargin - (int)(m_viewDistance / -CloudLatticeSpacing); i++) {
-        for (int j = -CloudSearchMargin - (int)(m_viewDistance / CloudLatticeSpacing);
-             j <= CloudSearchMargin - (int)(m_viewDistance / -CloudLatticeSpacing); j++) {
-            int cellX = (int)m_cameraPosition[0] / CloudLatticeSpacingBlocks + i;
-            int cellY = (int)m_cameraPosition[1] / CloudLatticeSpacingBlocks + j;
-            plasma::Vector<3, cube::Fixed> position;
-            position[1] = cube::Fixed((cellX % 2 + cellY * 2) * CloudLatticeStaggerBlocks);
-            position[0] = cube::Fixed(cellX * CloudLatticeSpacingBlocks);
-            int y = (int)position[1];
-            int x = (int)position[0];
-            cube::World::BiomeSample sample;
-            m_world->biomeSample(x, y, sample);
-            if (sample.humidity() * 0.5f < (cube::noise((double)position[0], (double)position[1]) + 1.0f) * 0.5f)
+    // The world's answers for a lattice cell rarely change: ask again every few seconds, not every frame.
+    if (m_cloudTime - m_cloudCellsTime > CloudCellLifetime || m_cloudCellsSeed != m_world->m_seed) {
+        m_cloudCells.clear();
+        m_cloudCellsTime = m_cloudTime;
+        m_cloudCellsSeed = m_world->m_seed;
+    }
+    for (int cellX = centerX - reach; cellX <= centerX + reach; ++cellX) {
+        const int x = cellX * CloudLatticeSpacing;
+        const float dx = float(cameraX - cube::Fixed(x));
+        const int stagger = (cellX % 2) * (CloudLatticeSpacing / 2);
+        const int centerY = cube::floorDivide(cameraY - stagger, CloudLatticeSpacing);
+        for (int cellY = centerY - reach; cellY <= centerY + reach; ++cellY) {
+            const int y = cellY * CloudLatticeSpacing + stagger;
+            const float dy = float(m_cameraPosition[1] - cube::Fixed(y));
+            if (dx * dx + dy * dy > squaredDrawDistance)
                 continue;
-            position[2] = cube::Fixed(m_world->height(x, y, cube::HeightFlagSkipPlaceShape));
-            if (position[2] < cube::Fixed(0LL))
-                position[2] = cube::Fixed(0LL);
+            const auto found = m_cloudCells.try_emplace({cellX, cellY});
+            CloudCell &cell = found.first->second;
+            if (found.second) {
+                cube::World::BiomeSample sample;
+                m_world->biomeSample(x, y, sample);
+                cell.humid = sample.humidity() + CloudCoverage >= cube::noise(double(x), double(y)) + 1.0f;
+                if (cell.humid)
+                    cell.height = (std::max)(0.0f, m_world->height(x, y, cube::HeightFlagSkipPlaceShape));
+            }
+            if (!cell.humid)
+                continue;
             // Cloud altitude noise profile: cell-coordinate salts 17/19, amplitude 30 and base height 200 blocks.
-            position[2] += cube::Fixed(cube::noise((double)(cellX * 17), (double)(cellY * 19)) * 30.0f + 200.0f);
-            if (!isSphereVisible(position, CloudVisibilityRadius, m_viewDistance + CloudVisibilityMargin))
+            const float altitude = cell.height + cube::noise(double(cellX) * 17, double(cellY) * 19) * 30.0f + 200.0f;
+            const plasma::Vector<3, cube::Fixed> position(cube::Fixed(x) + drift, cube::Fixed(y),
+                                                          cube::Fixed(altitude));
+            if (!isSphereVisible(position, CloudVisibilityRadius, drawDistance))
                 continue;
-            cube::World::AreaInfo info;
-            m_world->fillAreaInfo(x, y, info);
-            cube::Sprite *sprite;
-            if (sample.undead(info.type, info.influence) > DarkCloudUndeadThreshold)
-                sprite = m_world->m_spriteManager->sprite(cube::SpriteCloudDark);
-            else
-                sprite = m_world->m_spriteManager->sprite(cube::SpriteCloud02);
+            if (!cell.shaded) {
+                cube::World::BiomeSample sample;
+                m_world->biomeSample(x, y, sample);
+                cube::World::AreaInfo info;
+                m_world->fillAreaInfo(x, y, info);
+                cell.dark = sample.undead(info.type, info.influence) > DarkCloudUndeadThreshold;
+                cell.shaded = true;
+            }
+            cube::Sprite *sprite =
+                m_world->m_spriteManager->sprite(cell.dark ? cube::SpriteCloudDark : cube::SpriteCloud02);
 
             plasma::Matrix<float> model;
             model.identity();
@@ -3224,7 +3295,6 @@ void Renderer::renderClouds(const plasma::Vector<4, float> &skyColor1, const pla
         setWorldMatrix(cloud.matrix);
         cloud.sprite->draw();
     }
-    setLight(frontColor, backColor, direction, ambientColor);
 }
 
 void Renderer::renderEffects()
@@ -3372,60 +3442,36 @@ void Renderer::renderTranslucentSprites(SpriteBatch &batch, int flags)
     }
 }
 
-void Renderer::renderWater()
+void Renderer::renderWater(bool submerged)
 {
-    activateMode(RendererMode_DepthTwoSided);
-    setWhite(0.0f);
-    setGlow(0.0f);
-    setMaterialColor(m_tint);
-    clearPointLights();
-    setAlpha(m_waterAlpha);
+    bool drawingWater = false;
+    auto *graphics = m_world->m_spriteManager->graphics();
     for (cube::Zone *zone : m_zones) {
-        if (!zone->m_chunk.chunkBuffers.empty()) {
-            for (ChunkBuffer *buffer : zone->m_chunk.chunkBuffers) {
-                if (buffer->indexBuffers[ChunkPassWater]) {
-                    plasma::Matrix<float> model;
-                    model.identity();
-                    model.translate((float)((cube::Fixed(zone->m_position[0] * cube::BlocksPerZone)) + m_drawOriginX),
-                                    (float)((cube::Fixed(zone->m_position[1] * cube::BlocksPerZone)) + m_drawOriginY),
-                                    (float)buffer->baseZ);
-                    setWorldMatrix(model);
-                    if (buffer->vertexBuffer->bind() && buffer->indexBuffers[ChunkPassWater]->bind()) {
-                        m_world->m_spriteManager->graphics()->drawIndexed(buffer->vertexCount,
-                                                                          buffer->triangleCounts[ChunkPassWater]);
-                    }
-                }
+        for (ChunkBuffer *buffer : zone->m_chunk.chunkBuffers) {
+            auto *indices = buffer->indexBuffers[ChunkPassWater];
+            if (!indices || !buffer->vertexBuffer->bind() || !indices->bind())
+                continue;
+            if (!drawingWater) {
+                beginWater(submerged);
+                activateMode(RendererMode_Water);
+                setViewMatrix(m_viewMatrix);
+                setProjectionMatrix(m_projectionMatrix);
+                drawingWater = true;
             }
+            plasma::Matrix<float> model;
+            model.identity();
+            model.translate(float(cube::Fixed(zone->m_position[0] * cube::BlocksPerZone) + m_drawOriginX),
+                            float(cube::Fixed(zone->m_position[1] * cube::BlocksPerZone) + m_drawOriginY),
+                            float(buffer->baseZ));
+            setWorldMatrix(model);
+            graphics->drawIndexed(buffer->vertexCount, buffer->triangleCounts[ChunkPassWater]);
         }
     }
-    activateMode(RendererMode_Water);
-    setViewMatrix(m_viewMatrix);
-    setProjectionMatrix(m_projectionMatrix);
-    for (cube::Zone *zone : m_zones) {
-        if (!zone->m_chunk.chunkBuffers.empty()) {
-            for (ChunkBuffer *buffer : zone->m_chunk.chunkBuffers) {
-                if (buffer->indexBuffers[ChunkPassWater]) {
-                    setPointLights(zone->m_chunk.lightPositions, zone->m_chunk.lightColors);
-                    plasma::Matrix<float> model;
-                    model.identity();
-                    model.translate((float)((cube::Fixed(zone->m_position[0] * cube::BlocksPerZone)) + m_drawOriginX),
-                                    (float)((cube::Fixed(zone->m_position[1] * cube::BlocksPerZone)) + m_drawOriginY),
-                                    (float)buffer->baseZ);
-                    setWorldMatrix(model);
-                    if (buffer->vertexBuffer->bind() && buffer->indexBuffers[ChunkPassWater]->bind()) {
-                        m_world->m_spriteManager->graphics()->drawIndexed(buffer->vertexCount,
-                                                                          buffer->triangleCounts[ChunkPassWater]);
-                    }
-                }
-            }
-        }
-    }
-    setAlpha(1.0f);
 }
 
 void Renderer::resetViewDistance()
 {
-    m_viewDistance = 0.0f;
+    m_viewDistance = MinimumViewDistance;
 }
 
 void rotateTowards(plasma::Matrix<float> &matrix, const plasma::Vector<3, float> &from,
@@ -3505,8 +3551,14 @@ plasma::Vector<4, float> Renderer::shade(cube::ZoneNeighborhood &zones, ByteGrid
                 cube::Block block = zones.cube(x + i, y + j, z + k);
                 float weight = (3.0f - distance) / 3.0f;
                 weightSum += weight;
-                openSum += (float)!blocksLight(block) * weight;
-                if (!blocksLight(block)) {
+                const bool open = !blocksLight(block);
+                openSum += (float)open * weight;
+                if (m_alphaLighting) {
+                    const int light = block.type == cube::BlockLightSource ? 255
+                                      : open ? std::max(5, int(grid.lookup(x + i, y + j, z + k)))
+                                             : 5;
+                    lightSum += float(light) * weight;
+                } else if (open) {
                     unsigned char light = grid.lookup(x + i, y + j, z + k);
                     lightWeightSum += weight;
                     lightSum += (float)light * weight;
@@ -3516,6 +3568,12 @@ plasma::Vector<4, float> Renderer::shade(cube::ZoneNeighborhood &zones, ByteGrid
     }
     if (weightSum > 0.0f)
         open = openSum / weightSum;
+    if (m_alphaLighting) {
+        // Alpha colours blend toward a deeper version of the same palette in closed corners.
+        const float darken = 0.9f * (color[0] * 0.30f + color[1] * 0.59f + color[2] * 0.11f);
+        const auto channel = [&](int i) { return color[i] * open + std::max(0.0f, color[i] - darken) * (1.0f - open); };
+        return plasma::Vector<4, float>(channel(0), channel(1), channel(2), lightSum / (255.0f * weightSum));
+    }
     float light = 0.0f;
     if (lightWeightSum > 0.0f)
         light = lightSum / lightWeightSum;
@@ -3550,8 +3608,9 @@ inline void Renderer::renderMap(const plasma::Vector<3, cube::Fixed> &center, in
     static float highlight;
     m_worldMap->enter();
     activateMode(RendererMode_OpaqueFront);
-    m_worldMap->render(m_mapBatch, center, (int)((float)m_width * cursor[0]), (int)((float)m_height * cursor[1]),
-                       m_width, m_height,
+    m_mapQuestMarkers.clear();
+    m_worldMap->render(m_mapBatch, m_mapQuestMarkers, center, (int)((float)m_width * cursor[0]),
+                       (int)((float)m_height * cursor[1]), m_width, m_height,
                        plasma::Vector<3, float>(std::min(-m_cameraAngle[0], MapPitchClamp), 0.0f, -m_cameraAngle[2]),
                        zoom, viewScaleFactor, (int)m_frameTime, controlKeyDown, passiveView);
     // Inverts a copy of the map's view matrix and does not use the result.
@@ -3585,6 +3644,7 @@ inline void Renderer::renderMap(const plasma::Vector<3, cube::Fixed> &center, in
     }
     renderSprites(m_mapBatch, 0);
     renderTranslucentSprites(m_mapBatch, 0);
+    drawQuestMarkers(m_mapQuestMarkers, m_worldMap->m_viewMatrix, m_worldMap->m_projectionMatrix, true);
     setHighlight(plasma::Vector<4, float>(0.0f, 0.0f, 0.0f, 0.0f));
     m_worldMap->leave();
 }
@@ -3751,7 +3811,7 @@ void Renderer::updateViewDistance(float frameTime)
     for (int x = zoneX - m_zoneRadius; x <= zoneX + m_zoneRadius; x++) {
         for (int y = zoneY - m_zoneRadius; y <= zoneY + m_zoneRadius; y++) {
             cube::Zone *zone = m_world->zone(x, y);
-            if (zone && !zone->m_chunk.chunkBuffers.empty())
+            if (zone && zone->m_chunk.meshReady)
                 continue;
             cube::Fixed centerX((cube::Fixed(x) + 0.5).m_raw * cube::BlocksPerZone);
             cube::Fixed centerY((cube::Fixed(y) + 0.5).m_raw * cube::BlocksPerZone);
@@ -3814,7 +3874,6 @@ void Renderer::updateViewDistance(float frameTime)
     }
     bool inSpiritworld = m_world->m_localCreature->findBuff(cube::BuffSpiritworld) != nullptr;
     cube::Block cameraBlock = m_world->getBlockAtDot(m_cameraPosition[0], m_cameraPosition[1], m_cameraPosition[2]);
-    m_waterAlpha += (1.0f - m_waterAlpha) * cube::blendFactor(frameTime, WaterAlphaRecoveryRate);
     if (m_world->m_localCreature->m_entityData.currentAbility == cube::AbilityEagleFlight &&
         m_world->m_localCreature->m_entityData.timeSinceAbility > EagleFlightViewDelayMs) {
         m_viewDistance += ((std::max)(+EagleFlightMinimumViewDistance, distance) - m_viewDistance) *
@@ -3857,6 +3916,7 @@ void Renderer::render(const plasma::Vector<3, cube::Fixed> &cameraPosition,
     m_drawOriginX = -focusPosition[0];
     m_drawOriginY = -focusPosition[1];
     m_frameTime = step;
+    m_cloudTime += step;
     m_worldViewMatrix = worldViewMatrix;
     m_viewMatrix = viewMatrix;
     m_projectionMatrix = projectionMatrix;
@@ -3875,6 +3935,7 @@ void Renderer::render(const plasma::Vector<3, cube::Fixed> &cameraPosition,
     m_zones.clear();
     m_lights.clear();
     m_worldBatch.clear();
+    m_worldQuestMarkers.clear();
     m_underwaterPlantBatch.clear();
     m_mapBatch.clear();
     m_screenBatch.clear();
@@ -3893,12 +3954,11 @@ void Renderer::render(const plasma::Vector<3, cube::Fixed> &cameraPosition,
         +MaximumCreatureViewDistance,
         (std::min)(m_viewDistance, (float)(m_zoneRadius * cube::BlocksPerZone) * CreatureViewDistanceFraction));
 
-    // Under water everything is tinted blue.
+    // Use the shared water palette when the camera is submerged.
     m_tint = plasma::Vector<4, float>(1.0f, 1.0f, 1.0f, 1.0f);
     unsigned char cameraBlockType =
         m_world->getBlockAtDot(m_cameraPosition[0], m_cameraPosition[1], m_cameraPosition[2]).type;
-    if (cameraBlockType == cube::BlockWater)
-        m_tint = plasma::Vector<4, float>(0.5f, 0.5f, 1.0f, 1.0f);
+    const bool submerged = cameraBlockType == cube::BlockWater;
 
     // The light and sky colours move towards those of the place.
     plasma::Vector<4, float> skyColor1;
@@ -3910,6 +3970,34 @@ void Renderer::render(const plasma::Vector<3, cube::Fixed> &cameraPosition,
     plasma::Vector<4, float> ambientColor;
     m_world->harvestEnvironmentColors(m_cameraPosition, skyColor1, skyColor2, fogColor, sunColor, light, backLightColor,
                                       ambientColor);
+    cube::World::BiomeSample sample;
+    m_world->biomeSample((int)m_cameraPosition[0], (int)m_cameraPosition[1], sample);
+    cube::World::AreaInfo info;
+    m_world->fillAreaInfo((int)m_cameraPosition[0], (int)m_cameraPosition[1], info);
+    const double timeOfDay = m_world->m_state.m_time;
+    if (m_alphaLighting) {
+        const alpha::ZoneFactors climate {sample.temperature(info.type, info.influence), sample.humidity(),
+                                          sample.nearestBiome == cube::BiomeOcean ? 1.0f : 0.0f,
+                                          sample.lavaWeight(info.type, info.influence)};
+        const float daylight = alpha::paletteDaylight(timeOfDay);
+        const auto palette = alpha::palette(daylight, climate, cameraBlockType == cube::BlockWater);
+        const auto rgba = [](glm::vec3 v) { return plasma::Vector<4, float>(v.x, v.y, v.z, 1.0f); };
+        skyColor1 = rgba(palette.sky1);
+        skyColor2 = rgba(palette.sky2);
+        fogColor = rgba(palette.fog);
+        light = rgba(palette.front);
+        backLightColor = rgba(palette.back);
+        ambientColor = rgba(palette.ambient);
+        sunColor = rgba(glm::vec3(1.0f, std::min(1.0f, 0.20f + daylight), 0.8f * daylight * daylight));
+    }
+    if (submerged) {
+        const float brightness = 0.2f + 0.8f * alpha::sunlight(timeOfDay);
+        // The bright saturated blue measured from Cube World Omega footage.
+        skyColor1 = {0.02f * brightness, 0.45f * brightness, 0.82f * brightness, 1.0f};
+        skyColor2 = {0.0f, 0.35f * brightness, 0.72f * brightness, 1.0f};
+        fogColor = {0.0f, 0.42f * brightness, 0.79f * brightness, 1.0f};
+        m_tint = {0.38f, 0.82f, 1.0f, 1.0f};
+    }
     plasma::Vector<4, float> lightDifference = light - m_lightFrontColor;
     float factor = cube::blendFactor(step, EnvironmentLightBlendRate);
     m_lightFrontColor += lightDifference * factor;
@@ -3935,8 +4023,17 @@ void Renderer::render(const plasma::Vector<3, cube::Fixed> &cameraPosition,
     float sunY = sinf(sunAngle * 0.5f) * SunOrbitHorizontalAmplitude;
     float sunZ = -cosf(sunAngle);
     plasma::Vector<3, float> sunDirection = normalized(plasma::Vector<3, float>(sunX, sunY, sunZ));
+    if (m_alphaLighting) {
+        const auto direction = alpha::sunDirection(timeOfDay);
+        sunDirection = plasma::Vector<3, float>(direction.x, direction.y, direction.z);
+    }
 
     beginScene();
+    beginWorldEffects(m_alphaLighting ? alpha::sunlight(timeOfDay) : 1.0f,
+                      plasma::Vector<3, float>((float)(m_cameraPosition[0] + m_drawOriginX),
+                                               (float)(m_cameraPosition[1] + m_drawOriginY),
+                                               (float)m_cameraPosition[2]),
+                      !(flags & (RenderFlagOnlyPlayer | RenderFlagLogo)) && !m_world->m_worldName.empty());
     activateMode(RendererMode_OpaqueFront);
     setWhite(0.0f);
     setMaterialColor(m_tint);
@@ -3946,8 +4043,8 @@ void Renderer::render(const plasma::Vector<3, cube::Fixed> &cameraPosition,
     setGlow(0.0f);
     setDepthOffset(0.0f);
     setSky(m_skyColors[0], m_skyColors[1], m_skyColors[2], m_skyColors[3]);
-    setFogScale(cameraBlockType == cube::BlockWater ? (std::min)(+UnderwaterMaximumFogDistance, m_viewDistance)
-                                                    : m_viewDistance);
+    const float fogDistance = submerged ? (std::min)(+UnderwaterMaximumFogDistance, m_viewDistance) : m_viewDistance;
+    setFogScale(fogDistance);
     setFogGradientTranslation(cameraAngle[0]);
     setSunScreenPosition(cameraBlockType == cube::BlockWater ? plasma::Vector<3, float>(0.0f, 0.0f, -1.0f)
                                                              : sunDirection,
@@ -3962,18 +4059,26 @@ void Renderer::render(const plasma::Vector<3, cube::Fixed> &cameraPosition,
     }
 
     // Undead land is darker.
-    cube::World::BiomeSample sample;
-    m_world->biomeSample((int)m_cameraPosition[0], (int)m_cameraPosition[1], sample);
-    cube::World::AreaInfo info;
-    m_world->fillAreaInfo((int)m_cameraPosition[0], (int)m_cameraPosition[1], info);
     m_daylight *= 1.0f - sample.undead(info.type, info.influence) * UndeadDaylightReduction;
     float modelScale = 1024.0f / (float)m_height;
 
     unsigned int afterSky = timeGetTime();
+    if (!worldHidden && m_world->m_localCreature) {
+        m_townQuestMarkerTime -= m_frameTime;
+        if (m_townQuestMarkerTime <= 0.0f) {
+            m_townQuestGivers = cube::nearbyTownQuestGivers(*m_world, *m_world->m_localCreature, 96.0f);
+            m_townQuestMarkerTime = 500.0f;
+        }
+    } else {
+        m_townQuestGivers.clear();
+        m_townQuestMarkerTime = 0.0f;
+    }
     // The block looked at arrives as the address of three ints (Game's member); collectSprites compares it as a
     // vector.
     collectSprites(*(const plasma::Vector<3, int> *)lookedAtBlock, flags);
     collectLights(lights);
+    if (!worldHidden)
+        drawSunMap(sunDirection, focusPosition);
     unsigned int afterCollect = timeGetTime();
 
     activateMode(RendererMode_OpaqueFront);
@@ -3990,7 +4095,7 @@ void Renderer::render(const plasma::Vector<3, cube::Fixed> &cameraPosition,
     if (!worldHidden)
         renderParticles(particles);
     setLight(m_lightFrontColor, m_lightBackColor, sunDirection, m_ambientColor);
-    renderWater();
+    renderWater(submerged);
     unsigned int afterWater = timeGetTime();
     drawGroundSpots();
     activateMode(RendererMode_DepthFront);
@@ -3998,7 +4103,10 @@ void Renderer::render(const plasma::Vector<3, cube::Fixed> &cameraPosition,
     renderTranslucentSprites(m_worldBatch, SpritePassFlagZoneLights);
 
     if (!worldHidden) {
-        renderClouds(skyColor1, skyColor2, m_lightFrontColor, m_lightBackColor, sunDirection, m_ambientColor);
+        if (!submerged) {
+            renderClouds(sunDirection);
+            setFogScale(fogDistance);
+        }
 
         // The stars, at night and on a long flight: fifty rings of cubes around the camera, fading in below a daylight
         // of 0.4.
@@ -4033,7 +4141,9 @@ void Renderer::render(const plasma::Vector<3, cube::Fixed> &cameraPosition,
     }
     drawShadows(m_lightFrontColor);
     drawTrails();
+    drawQuestMarkers(m_worldQuestMarkers, m_viewMatrix, m_projectionMatrix);
     unsigned int afterWorld = timeGetTime();
+    endWorldEffects();
 
     // The start menu's logo, swaying.
     if (flags & RenderFlagLogo) {
@@ -4228,7 +4338,7 @@ static inline plasma::Vector<4, float> waterColor()
     return plasma::Vector<4, float>(0.25f, 0.5f, 0.5f, 1.0f);
 }
 
-void Renderer::updateChunk(int x, int y)
+void Renderer::updateChunk(cube::Zone &zone)
 {
     // One list of vertices per slice of 250 blocks of height (a vertex holds its position in bytes), and the indices
     // of each pass over it. Nothing selects the passes 2, 4 and 5 here.
@@ -4239,30 +4349,30 @@ void Renderer::updateChunk(int x, int y)
     std::vector<std::vector<unsigned int>> lavaIndices;
     std::vector<std::vector<unsigned int>> indices4;
     std::vector<std::vector<unsigned int>> indices5;
+    const int x = zone.m_position[0];
+    const int y = zone.m_position[1];
     int x0 = x * cube::BlocksPerZone;
     int y0 = y * cube::BlocksPerZone;
 
     m_world->enterZones();
-    cube::Zone *zone = m_world->zone(x, y);
     cube::ZoneNeighborhood zones(m_world, x, y);
     m_world->leaveZones();
-    if (!zone)
-        return;
 
     int y1 = y0 + cube::BlocksPerZone;
     int x1 = x0 + cube::BlocksPerZone;
-    ByteGrid grid(zones, x0, y0, x1, y1, ChunkLightReach);
-    computeLight(zones, grid, x0, y0, x1, y1, ChunkLightReach);
+    const int lightMargin = m_alphaLighting ? 19 : ChunkLightReach;
+    ByteGrid grid(zones, x0, y0, x1, y1, lightMargin);
+    computeLight(zones, grid, x0, y0, x1, y1, lightMargin, m_alphaLighting);
 
     // The plants take their light from the grid (the byte at their block); those that stand in water get
     // PlantFlagUnderwater.
-    for (cube::Zone::Plant &plant : zone->m_plants) {
+    for (cube::Zone::Plant &plant : zone.m_plants) {
         plant.daylight =
             (float)grid.lookup(plant.position[0].toBlock(), plant.position[1].toBlock(), plant.position[2].toBlock());
         if (zones.cube(plant.position[0], plant.position[1], plant.position[2]).type == cube::BlockWater)
             plant.flags |= cube::PlantFlagUnderwater;
     }
-    for (cube::Zone::Plant &plant : zone->m_lightPlants) {
+    for (cube::Zone::Plant &plant : zone.m_lightPlants) {
         plant.daylight =
             (float)grid.lookup(plant.position[0].toBlock(), plant.position[1].toBlock(), plant.position[2].toBlock());
         if (zones.cube(plant.position[0], plant.position[1], plant.position[2]).type == cube::BlockWater)
@@ -4274,7 +4384,6 @@ void Renderer::updateChunk(int x, int y)
     int maxZ = 0;
     bool first = true;
     for (int bx = x0; bx < x1; bx++) {
-        Sleep(0);
         for (int by = y0; by < y1; by++) {
             cube::Field *field = zones.field(bx, by);
             if (!field)
@@ -4325,6 +4434,10 @@ void Renderer::updateChunk(int x, int y)
     lavaIndices.resize(slices);
     indices4.resize(slices);
     indices5.resize(slices);
+    std::vector<std::vector<WaterLily>> waterLilies(slices);
+    constexpr int MaxWaterLiliesPerZone = 28;
+    const auto waterLilySeed = static_cast<std::uint64_t>(m_world->m_seed);
+    int waterLilyCount = 0;
 
     // A zone of open sea (every column water at height 0 under a fully lit block: computeLight keeps the light of an
     // open block in its first colour byte) gets one quad for its whole surface.
@@ -4362,10 +4475,18 @@ void Renderer::updateChunk(int x, int y)
     typedef plasma::Vector<3, int> Normal;
     for (int bx = x0; bx < x1; bx++) {
         for (int by = y0; by < y1; by++) {
-            Sleep(0);
             cube::Field *field = zones.field(bx, by);
             if (!field)
                 continue;
+            if (waterLilyCount < MaxWaterLiliesPerZone && !openSea) {
+                auto lily = waterLilyForColumn(*field, bx, by, waterLilySeed);
+                if (lily && lily->surfaceZ - 1 >= minZ && lily->surfaceZ - 1 <= maxZ) {
+                    const int slice = (lily->surfaceZ - 1 - minZ) / 250;
+                    lily->daylight = grid.lookup(bx, by, lily->surfaceZ);
+                    waterLilies[slice].push_back(*lily);
+                    ++waterLilyCount;
+                }
+            }
             int localX = bx - x0;
             int localY = by - y0;
             int top = (int)field->m_blocks.size() + field->m_baseZ;
@@ -4385,22 +4506,9 @@ void Renderer::updateChunk(int x, int y)
 
             // Where a neighbour's column begins lower, the blocks under this column show; they are not stored, so the
             // world makes them again from the column's terrain values.
-            float height, heightWest, heightEast, heightSouth, heightNorth;
-            float cliffs, temperature, humidity, sand, fade, path;
-            float firelands, undead, enchantedForest, lava, poison;
+            const float height = field->m_height;
+            float heightWest = height, heightEast = height, heightSouth = height, heightNorth = height;
             if (low < field->m_baseZ) {
-                cliffs = field->m_mountainCliffs;
-                temperature = field->m_temperature;
-                humidity = field->m_humidity;
-                firelands = field->m_firelands;
-                undead = field->m_undead;
-                enchantedForest = field->m_enchantedForest;
-                sand = field->m_sandAmount;
-                path = field->m_streetAmount;
-                fade = 0.0f;
-                lava = 0.0f;
-                poison = 0.0f;
-                height = field->m_height;
                 heightWest = m_world->height(bx - 1, by, 0);
                 heightEast = m_world->height(bx + 1, by, 0);
                 heightSouth = m_world->height(bx, by - 1, 0);
@@ -4413,14 +4521,17 @@ void Renderer::updateChunk(int x, int y)
                 cube::Block block = zones.cube(bx, by, z);
                 if (block.type == cube::BlockAir)
                     continue;
+                const size_t firstVertex = vertices[slice].size();
                 // A type 20 block shines (computeLight) and keeps its colour.
                 bool plain = block.type == cube::BlockLightSource;
                 plasma::Vector<4, float> color(block.color[0], block.color[1], block.color[2], 255.0f);
                 color = color / plasma::Vector<4, float>(255.0f, 255.0f, 255.0f, 255.0f);
                 if (z < field->m_baseZ) {
-                    cube::Block surface(m_world->surfaceBlock(bx, by, z, height, heightWest, heightEast, heightSouth,
-                                                              heightNorth, cliffs, temperature, humidity, sand, fade,
-                                                              path, firelands, undead, enchantedForest, lava, poison));
+                    cube::Block surface(m_world->surfaceBlock(
+                        bx, by, z, height, heightWest, heightEast, heightSouth, heightNorth, field->m_mountainCliffs,
+                        field->m_temperature, field->m_humidity, field->m_sandAmount, 0.0f, field->m_streetAmount,
+                        field->m_firelands, field->m_undead, field->m_enchantedForest, 0.0f, 0.0f,
+                        field->m_reliefSurface));
                     plasma::Vector<4, float> surfaceColor(surface.color[0], surface.color[1], surface.color[2], 255.0f);
                     surfaceColor = surfaceColor / plasma::Vector<4, float>(255.0f, 255.0f, 255.0f, 255.0f);
                     color = surfaceColor;
@@ -4591,6 +4702,24 @@ void Renderer::updateChunk(int x, int y)
                                shade(zones, grid, bx, by + 1, z + 1, color, Normal(0, 0, 1), plain)));
                     addQuad(*indices, vertices[slice]);
                 }
+                if (isFoliage(block.type)) {
+                    // Only corners among leaves and air move: a corner shared with a branch, a trunk or the ground
+                    // stays where that block's faces meet it, so the leaves stretch instead of opening a gap.
+                    for (size_t i = firstVertex; i < vertices[slice].size(); ++i) {
+                        Vertex &vertex = vertices[slice][i];
+                        const int cornerX = x0 + vertex.position[0];
+                        const int cornerY = y0 + vertex.position[1];
+                        const int cornerZ = sliceBase + vertex.position[2];
+                        bool free = true;
+                        for (int k = 0; k < 8 && free; ++k) {
+                            const int type =
+                                zones.cube(cornerX - (k & 1), cornerY - ((k >> 1) & 1), cornerZ - (k >> 2)).type;
+                            free = type == cube::BlockAir || isFoliage(type);
+                        }
+                        if (free)
+                            vertex.normal |= Vertex::FoliageFace;
+                    }
+                }
 
                 // A column that ends below height 0 goes on with the block at 0, where the sea is.
                 if (z == top - 1 && top < 1) {
@@ -4650,16 +4779,13 @@ void Renderer::updateChunk(int x, int y)
             buffers5[i] = m_world->m_spriteManager->graphics()->createIndexBuffer32(indices5[i]);
     }
 
-    // The zone's chunk takes the new buffers under the mesh lock; the buffers of an earlier pass that the chunk thread
-    // has not taken yet are deleted.
-    Chunk &chunk = zone->m_chunk;
-    std::list<ChunkBuffer *> oldBuffers(chunk.newChunkBuffers);
+    // The chunk thread publishes the new buffers after preparing them for rendering.
+    Chunk &chunk = zone.m_chunk;
     m_world->enterZoneMeshes();
     chunk.center = (boundsMin + boundsMax) * cube::Fixed(0.5);
     chunk.radius = plasma::Vector<3, float>(chunk.center - boundsMax).length() * ChunkSphereRadiusExpansion;
     chunk.boundsMin = boundsMin;
     chunk.boundsMax = boundsMax;
-    chunk.newChunkBuffers.clear();
     chunk.triangleCount = 0;
     int baseZ = minZ;
     for (int i = 0; i < slices; i++) {
@@ -4680,16 +4806,14 @@ void Renderer::updateChunk(int x, int y)
             buffer->triangleCounts[ChunkPassLava] = (int)(lavaIndices[i].size() / 3);
             buffer->triangleCounts[ChunkPass_4] = (int)(indices4[i].size() / 3);
             buffer->triangleCounts[ChunkPass_5] = (int)(indices5[i].size() / 3);
+            buffer->waterLilies = std::move(waterLilies[i]);
             chunk.newChunkBuffers.push_back(buffer);
             chunk.triangleCount += buffer->triangleCounts[ChunkPassSolid] + buffer->triangleCounts[ChunkPassWater] * 2 +
                                    buffer->triangleCounts[ChunkPassLava];
         }
         baseZ += 250;
     }
-    chunk.needsRemesh = false;
     m_world->leaveZoneMeshes();
-    for (ChunkBuffer *buffer : oldBuffers)
-        delete buffer;
 }
 
 }

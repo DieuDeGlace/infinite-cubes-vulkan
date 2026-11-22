@@ -1,10 +1,13 @@
 // Renderer gathers visible zones, sprites, effects and lights and draws the world, world map and interface. It keeps
-// camera matrices and sky and light colours; D3D11Renderer implements its drawing and shader-parameter interface.
+// camera matrices and sky and light colours; VulkanRenderer implements its drawing and shader-parameter interface.
 #pragma once
 #include <vector>
 #include <array>
 #include <list>
+#include <map>
+#include <utility>
 #include "cube/Creature.h"
+#include "gfx/QuestMarker.h"
 #include "gfx/RendererIds.h"
 #include "gfx/SpriteBatch.h"
 #include "plasma/Matrix.h"
@@ -65,7 +68,7 @@ struct GroundShadow {
 
 class Renderer {
 public:
-    Renderer(cube::World *world, cube::WorldMap *worldMap);
+    Renderer(cube::World *world, cube::WorldMap *worldMap, bool alphaLighting);
     virtual ~Renderer();
 
     virtual void activateMode(int mode) {}
@@ -77,7 +80,20 @@ public:
     virtual void drawShadows(const plasma::Vector<4, float> &lightColor) {}
     // Weapon trails.
     virtual void drawTrails() {}
+    virtual void beginWorldEffects(float sunlight, const plasma::Vector<3, float> &cameraPosition, bool allowTemporal)
+    {}
+    virtual void beginWater(bool submerged) {}
+    virtual void endWorldEffects() {}
+    // overlay: drawn over everything, for the map, whose layers are not ordered by depth.
+    virtual void drawQuestMarkers(const std::vector<QuestMarker> &markers, const plasma::Matrix<float> &view,
+                                  const plasma::Matrix<float> &projection, bool overlay = false)
+    {}
+    virtual void setGlobalIllumination(bool enabled) {}
+    virtual void setSunShadows(bool enabled) {}
+    virtual void setMovingLeaves(bool enabled) {}
+    virtual void drawSunMap(const plasma::Vector<3, float> &direction, const plasma::Vector<3, cube::Fixed> &focus) {}
     virtual void setHighlight(const plasma::Vector<4, float> &value) {}
+    const bool m_alphaLighting;
 
     virtual void setWorldMatrix(const plasma::Matrix<float> &matrix) {}
     virtual void setViewMatrix(const plasma::Matrix<float> &matrix) {}
@@ -123,15 +139,11 @@ public:
                    float frameTime);
     void renderTranslucentSprites(SpriteBatch &batch, int flags);
     // Draws water surfaces using m_prerequisiteEntityIndices as alpha, restoring alpha to 1 afterwards.
-    void renderWater();
+    void renderWater(bool submerged);
     void renderChunks(const plasma::Vector<4, float> &frontColor, const plasma::Vector<4, float> &backColor,
                       const plasma::Vector<3, float> &direction, const plasma::Vector<4, float> &ambientColor);
     // Clouds nearer than 180 blocks fade out towards 80 and are drawn last, first without and then with their alpha.
-    // The first two arguments (render passes the sky's gradient colours) are not read; the last four go to setLight at
-    // the end.
-    void renderClouds(const plasma::Vector<4, float> &skyColor1, const plasma::Vector<4, float> &skyColor2,
-                      const plasma::Vector<4, float> &frontColor, const plasma::Vector<4, float> &backColor,
-                      const plasma::Vector<3, float> &direction, const plasma::Vector<4, float> &ambientColor);
+    void renderClouds(const plasma::Vector<3, float> &direction);
     // Called by draw.
     void renderEffects();
     // The five draw functions of renderEffects, one per list, each drawing cubes (sprite 2630) that move with the
@@ -156,7 +168,7 @@ public:
     bool isBoxVisible(const plasma::Vector<3, cube::Fixed> &minimum, const plasma::Vector<3, cube::Fixed> &maximum,
                       float range);
     bool isSphereVisible(const plasma::Vector<3, cube::Fixed> &position, float radius, float range);
-    bool canMesh(int x, int y);
+    bool canMesh(int x, int y); // The caller holds the zone mesh lock.
     float attenuation(const plasma::Vector<3, cube::Fixed> &position, float range);
     // Uses the model, view and projection matrices used by drawItem.
     void drawCubes(const cube::Item *item, const plasma::Matrix<float> &model, const plasma::Matrix<float> &view,
@@ -192,6 +204,7 @@ public:
     // items on the ground and the static entities of the seven by seven zones around the player (placeStaticEntity)
     // and of the projectiles.
     void collectSprites(const plasma::Vector<3, int> &lookedAt, int flags);
+    void collectWaterLilies(const cube::Zone &zone);
     // The types 0, 4, 5 and 6 take the light of the block they are in; the others glow.
     void renderParticles(std::list<cube::Particle> &particles);
     void placeStaticEntity(const cube::StaticEntity &entity);
@@ -210,7 +223,7 @@ public:
     // surface. Each slice becomes a vertex buffer and its index buffers (sixteen-bit where the vertices allow), and
     // under the mesh lock the Chunk gets its bounds and the new ChunkBuffers; buffers of an earlier pass that the
     // chunk thread has not taken are deleted. Sleep(0) per column lets the other threads run.
-    void updateChunk(int x, int y);
+    void updateChunk(cube::Zone &zone);
     // The colour of a mesh vertex at the corner (x, y, z) of a face that looks along direction: color darkened by how
     // much of the space around the corner is solid (the open share of the blocks within three of it on the face's
     // side, nearer ones weighing more, to the power 1.2), with the saturation raised in the dark; alpha is the mean of
@@ -358,13 +371,28 @@ protected:
     std::list<Line> m_lines;
     std::list<cube::Creature *> m_trailCreatures;
     std::list<GroundSpot> m_groundSpots;
-    std::vector<GroundShadow> m_shadows; // drawn by D3D11Renderer::drawShadows
+    std::vector<GroundShadow> m_shadows; // drawn by VulkanRenderer::drawShadows
     SpriteBatch m_worldBatch;
     SpriteBatch m_underwaterPlantBatch;
     SpriteBatch m_mapBatch; // the world map's sprites (WorldMap::render)
+    std::vector<QuestMarker> m_worldQuestMarkers;
+    std::vector<QuestMarker> m_mapQuestMarkers;
+    std::vector<long long> m_townQuestGivers;
+    float m_townQuestMarkerTime = 0.0f;
     std::vector<cube::Zone *> m_zones;
     std::vector<Light> m_lights;
     float m_frameTime;
+    double m_cloudTime = 0.0;
+    // What the world says about one cell of the cloud lattice, asked once and kept for a few seconds.
+    struct CloudCell {
+        bool humid = false;  // The cell carries a cloud.
+        float height = 0.0f; // Terrain height under the cloud, at least 0. Set for humid cells.
+        bool shaded = false; // dark is known.
+        bool dark = false;   // The cloud is over undead land.
+    };
+    std::map<std::pair<int, int>, CloudCell> m_cloudCells;
+    double m_cloudCellsTime = 0.0; // m_cloudTime when m_cloudCells was last emptied
+    int m_cloudCellsSeed = 0;      // the world seed m_cloudCells was filled for
     plasma::Vector<3, cube::Fixed> m_cameraPosition;
     plasma::Vector<3, float> m_cameraAngle;
     plasma::Matrix<float> m_worldViewMatrix;  // render's seventh argument; not read in this file
@@ -382,7 +410,6 @@ protected:
     float m_effectViewDistance;
     float m_creatureViewDistance;
     float m_viewDistance;
-    float m_waterAlpha; // 1 at construction; updateViewDistance moves it towards 1; renderWater's alpha
     plasma::Vector<4, float> m_skyColors[4];
     plasma::Vector<4, float> m_dungeonShade;
     plasma::Vector<4, float> m_ambientColor;    // (0.3, 0.3, 0.7, 1); setLight / setAmbientColor

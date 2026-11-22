@@ -28,6 +28,17 @@ Options::Options()
     mapScale = 1.0f;
     musicLoop = 0;
     antiAliasingSamples = 8;
+    waterLilies = 1;
+    alphaTerrain = 0;
+    largerBiomes = 0;
+    pyroProgression = 1;
+    aquaticEnemies = 1;
+    alphaLighting = 0;
+    sunShadows = 0;
+    rsmGI = 0;
+    movingLeaves = 1;
+    temporalAA = 0;
+    spatialAA = 0;
 }
 
 void Options::load()
@@ -102,6 +113,39 @@ void Options::load()
         if (key == "antiAliasingSamples") {
             file >> antiAliasingSamples;
         }
+        if (key == "waterLilies") {
+            file >> waterLilies;
+        }
+        if (key == "alphaTerrain") {
+            file >> alphaTerrain;
+        }
+        if (key == "largerBiomes") {
+            file >> largerBiomes;
+        }
+        if (key == "pyroProgression") {
+            file >> pyroProgression;
+        }
+        if (key == "aquaticEnemies") {
+            file >> aquaticEnemies;
+        }
+        if (key == "alphaLighting") {
+            file >> alphaLighting;
+        }
+        if (key == "sunShadows") {
+            file >> sunShadows;
+        }
+        if (key == "rsmGI") {
+            file >> rsmGI;
+        }
+        if (key == "movingLeaves") {
+            file >> movingLeaves;
+        }
+        if (key == "temporalAA") {
+            file >> temporalAA;
+        }
+        if (key == "spatialAA") {
+            file >> spatialAA;
+        }
     }
 }
 
@@ -129,6 +173,17 @@ void Options::save()
     file << "guiScale " << guiScale << std::endl;
     file << "mapScale " << mapScale << std::endl;
     file << "antiAliasingSamples " << antiAliasingSamples << std::endl;
+    file << "waterLilies " << waterLilies << std::endl;
+    file << "alphaTerrain " << alphaTerrain << std::endl;
+    file << "largerBiomes " << largerBiomes << std::endl;
+    file << "pyroProgression " << pyroProgression << std::endl;
+    file << "aquaticEnemies " << aquaticEnemies << std::endl;
+    file << "alphaLighting " << alphaLighting << std::endl;
+    file << "sunShadows " << sunShadows << std::endl;
+    file << "rsmGI " << rsmGI << std::endl;
+    file << "movingLeaves " << movingLeaves << std::endl;
+    file << "temporalAA " << temporalAA << std::endl;
+    file << "spatialAA " << spatialAA << std::endl;
 }
 
 }

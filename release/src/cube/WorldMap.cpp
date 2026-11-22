@@ -22,7 +22,7 @@
 #include "cube/WorldLayout.h"
 #include "gfx/Renderer.h"
 #include "gfx/SpriteBatch.h"
-#include "plasma/D3D11Engine.h"
+#include "plasma/Engine.h"
 #include "cube/CreatureIds.h"
 #include "cube/BlockIds.h"
 #include "cube/SpriteIds.h"
@@ -59,7 +59,7 @@ const int FlightRouteDotSpacing = 5;
 const float FlightRouteDotScale = 1.5f;
 }
 
-WorldMap::WorldMap(World *world, plasma::D3D11Engine *engine)
+WorldMap::WorldMap(World *world, plasma::Engine *engine)
     : m_world(world),
       m_engine(engine),
       m_hoveredRegion(NoCoordinate, NoCoordinate),
@@ -214,29 +214,29 @@ struct MapCreature {
           depth(depth)
     {}
     // A creature of the world.
-    MapCreature(const plasma::Vector<3, Fixed> &position, float rotation, int race, int hostility,
-                const Creature::EntityData::Appearance &appearance, float depth)
-        : position(position),
-          rotation(rotation),
-          race(race),
-          hostility(hostility),
-          appearance(appearance),
+    MapCreature(Creature &owner, float depth)
+        : position(owner.m_drawnPosition),
+          rotation(owner.m_drawnRotation[2]),
+          race(owner.m_entityData.race),
+          hostility(owner.m_entityData.hostilityType),
+          creature(&owner),
           scale(1.0f),
           depth(depth)
     {}
 
-    plasma::Vector<3, Fixed> position;           // Creature::m_drawnPosition, the drawn position
-    float rotation;                              // Creature::m_drawnRotation[2], the drawn rotation about z
-    int race;                                    // EntityData::race, or -1 for the character
-    int hostility;                               // EntityData::hostilityType; a hostile creature's marker pulses
-    Creature::EntityData::Appearance appearance; // the head, hair and chest models and the hair colour are drawn
-    float scale;                                 // 1 when constructed; render sets 0.4 / the view scale
-    float depth;                                 // the view-space depth, the sort key (far first)
+    plasma::Vector<3, Fixed> position; // Creature::m_drawnPosition, the drawn position
+    float rotation;                    // Creature::m_drawnRotation[2], the drawn rotation about z
+    int race;                          // EntityData::race, or -1 for the character
+    int hostility;                     // EntityData::hostilityType; a hostile creature's marker pulses
+    Creature *creature = nullptr;
+    float scale; // 1 when constructed; render sets 0.4 / the view scale
+    float depth; // the view-space depth, the sort key (far first)
 };
 
-void WorldMap::render(gfx::SpriteBatch &batch, const plasma::Vector<3, Fixed> &center, int cursorX, int cursorY,
-                      int width, int height, const plasma::Vector<3, float> &angles, int zoom, float viewScaleFactor,
-                      int frameTime, bool controlKeyDown, bool passiveView)
+void WorldMap::render(gfx::SpriteBatch &batch, std::vector<gfx::QuestMarker> &questMarkers,
+                      const plasma::Vector<3, Fixed> &center, int cursorX, int cursorY, int width, int height,
+                      const plasma::Vector<3, float> &angles, int zoom, float viewScaleFactor, int frameTime,
+                      bool controlKeyDown, bool passiveView)
 {
     m_cursorPosition = plasma::Vector<3, Fixed>(Fixed(NoCoordinate), Fixed(NoCoordinate), Fixed(-1));
     m_creaturePositions.clear();
@@ -448,9 +448,7 @@ void WorldMap::render(gfx::SpriteBatch &batch, const plasma::Vector<3, Fixed> &c
             plasma::Vector<3, Fixed> offset = creature->m_entityData.position - center;
             plasma::Vector<3, float> scaled(offset * inverseScale);
             float depth = view[2] * scaled[0] + view[6] * scaled[1] + view[10] * scaled[2];
-            MapCreature marker(creature->m_drawnPosition, creature->m_drawnRotation[2], creature->m_entityData.race,
-                               creature->m_entityData.hostilityType, creature->m_entityData.appearance, depth);
-            creatures.push_back(marker);
+            creatures.emplace_back(*creature, depth);
             creatures.back().scale = MapCreatureMarkerScale / viewScale;
         }
         // Where the map shows a passive creature: its position, moved to the edge of the shown square along x and y
@@ -501,18 +499,21 @@ void WorldMap::render(gfx::SpriteBatch &batch, const plasma::Vector<3, Fixed> &c
                                              plasma::Vector<4, float>(1.0f, 1.0f, 1.0f, 1.0f)));
             pulse = (cosf(m_world->m_clock * MapMarkerPulseRate) + 1.0f) * 0.5f;
         } else {
-            if (m_world->m_spriteManager->sprite(marker.appearance.headModel) != nullptr) {
-                sprites.push_back(std::make_pair(m_world->m_spriteManager->sprite(marker.appearance.headModel),
+            const auto &appearance = marker.creature->m_entityData.appearance;
+            if (m_world->m_spriteManager->sprite(appearance.headModel) != nullptr) {
+                sprites.push_back(std::make_pair(m_world->m_spriteManager->sprite(appearance.headModel),
                                                  plasma::Vector<4, float>(1.0f, 1.0f, 1.0f, 1.0f)));
             } else {
-                sprites.push_back(std::make_pair(m_world->m_spriteManager->sprite(marker.appearance.chestModel),
+                sprites.push_back(std::make_pair(m_world->m_spriteManager->sprite(appearance.chestModel),
                                                  plasma::Vector<4, float>(1.0f, 1.0f, 1.0f, 1.0f)));
             }
-            sprites.push_back(
-                std::make_pair(m_world->m_spriteManager->sprite(marker.appearance.hairModel),
-                               plasma::Vector<4, float>((float)marker.appearance.hairColor[0] / 255.0f,
-                                                        (float)marker.appearance.hairColor[1] / 255.0f,
-                                                        (float)marker.appearance.hairColor[2] / 255.0f, 1.0f)));
+            Sprite *baseHair = m_world->m_spriteManager->sprite(appearance.hairModel);
+            Sprite *hair = marker.creature->styledHair(baseHair);
+            const auto &rgb = appearance.hairColor;
+            const plasma::Vector<4, float> tint =
+                hair == baseHair ? plasma::Vector<4, float>(rgb[0] / 255.0f, rgb[1] / 255.0f, rgb[2] / 255.0f, 1.0f)
+                                 : plasma::Vector<4, float>(1, 1, 1, 1);
+            sprites.emplace_back(hair, tint);
             if (marker.hostility != HostilityPlayer) {
                 pulse = (cosf(m_world->m_clock * MapMarkerPulseRate) + 1.0f) * 0.5f;
             }
@@ -565,6 +566,45 @@ void WorldMap::render(gfx::SpriteBatch &batch, const plasma::Vector<3, Fixed> &c
         layer += 1.0f;
     }
 
+    if (m_world->m_localCreature && m_world->m_localCreature->m_playerData) {
+        const auto &quests = m_world->m_localCreature->m_playerData->townQuests;
+        // Villagers offering a request anywhere in the loaded zones. Their search is costly, so twice a second.
+        constexpr float GiverRange = 1024.0f;
+        if (now - m_townQuestGiversTime >= 500 || m_townQuestGiversTime == 0) {
+            m_townQuestGivers = nearbyTownQuestGivers(*m_world, *m_world->m_localCreature, GiverRange);
+            m_townQuestGiversTime = now;
+        }
+        for (const long long id : m_townQuestGivers) {
+            const Creature *giver = m_world->creatureByID(id);
+            // Givers already asked appear at their quest's return point below.
+            if (!giver || std::any_of(quests.begin(), quests.end(), [&](const TownQuest &quest) {
+                    return quest.giver == id && quest.worldSeed == m_world->m_seed;
+                }))
+                continue;
+            const plasma::Vector<3, float> offset =
+                plasma::Vector<3, float>(giver->m_entityData.position - center) / float(scale);
+            const float range = float(g_mapRegionSize * m_regionRadius);
+            if (std::abs(offset[0]) >= range || std::abs(offset[1]) >= range)
+                continue;
+            questMarkers.push_back({{offset[0], offset[1], std::max(0.0f, offset[2]) + 4.0f}, gfx::QuestIcon::Giver});
+        }
+        for (const auto &quest : quests) {
+            // A request without targets yet has no place to mark.
+            if (quest.rewarded || quest.worldSeed != m_world->m_seed || quest.pending())
+                continue;
+            const bool complete = quest.ready();
+            const auto &point = complete ? quest.giverPosition : quest.targetPosition;
+            const plasma::Vector<3, Fixed> position(Fixed(point[0] + 0.5), Fixed(point[1] + 0.5), Fixed(point[2]));
+            const plasma::Vector<3, float> offset = plasma::Vector<3, float>(position - center) / float(scale);
+            const float range = float(g_mapRegionSize * m_regionRadius);
+            if (std::abs(offset[0]) >= range || std::abs(offset[1]) >= range)
+                continue;
+            questMarkers.push_back({{offset[0], offset[1], std::max(0.0f, offset[2]) + 4.0f},
+                                    complete ? gfx::QuestIcon::Giver : gfx::QuestIcon::Location});
+        }
+        layer += 1.0f;
+    }
+
     // A dotted line from the character to the selected block, or to its flight destination while it flies (ability
     // 156), rising in an arc.
     plasma::Vector<2, int> target = m_selectedFlightPoint;
@@ -578,7 +618,7 @@ void WorldMap::render(gfx::SpriteBatch &batch, const plasma::Vector<3, Fixed> &c
             return;
         }
     }
-    int targetZ = (int)m_world->height(target[0], target[1], 0);
+    int targetZ = (int)m_world->terrainHeight(target[0], target[1], 0);
     plasma::Vector<2, int> start((int)m_world->m_localCreature->m_entityData.position[0],
                                  (int)m_world->m_localCreature->m_entityData.position[1]);
     int startZ = (int)m_world->m_localCreature->m_entityData.position[2];
@@ -743,11 +783,20 @@ bool WorldMap::update(const plasma::Vector<3, Fixed> &position, int level)
             // block the model needs (buildings and monuments rise above the terrain).
             std::vector<int> heights((g_mapRegionSize + 2 * g_mapRegionBorder) *
                                      (g_mapRegionSize + 2 * g_mapRegionBorder));
+            std::vector<float> reliefOffsets(heights.size());
+            const auto columnIndex = [](int i, int j) {
+                return i + g_mapRegionBorder + (g_mapRegionBorder + j) * (g_mapRegionSize + 2 * g_mapRegionBorder);
+            };
             bool first = true;
             int lowest = 0;
             int highest = 0;
+            const auto recordHeight = [&](int i, int j, int top, int ceiling) {
+                heights[columnIndex(i, j)] = top;
+                lowest = first ? top : (std::min)(lowest, top);
+                highest = first ? ceiling : (std::max)(highest, ceiling);
+                first = false;
+            };
             for (int i = -g_mapRegionBorder; i < g_mapRegionBorder + g_mapRegionSize; i++) {
-                Sleep(0);
                 for (int j = -g_mapRegionBorder; j < g_mapRegionBorder + g_mapRegionSize; j++) {
                     int x = mapRegionX * regionSize + i * scale;
                     int y = mapRegionY * regionSize + j * scale;
@@ -756,7 +805,8 @@ bool WorldMap::update(const plasma::Vector<3, Fixed> &position, int level)
                     World::AreaInfo info;
                     m_world->fillAreaInfo(x, y, info);
                     float elevation = sample.biomeElevation(info.type, info.influence);
-                    float road = m_world->streetAmount(x, y, info.type, info.influence);
+                    float roadDistance = 0.0f;
+                    float road = m_world->streetAmount(x, y, info.type, info.influence, &roadDistance);
                     float lava = sample.lavaWeight(info.type, info.influence);
                     float mountains = sample.mountains();
                     float undead = sample.undead(info.type, info.influence);
@@ -767,9 +817,12 @@ bool WorldMap::update(const plasma::Vector<3, Fixed> &position, int level)
                     float desertness = sample.desertness();
                     float cliffs =
                         m_world->mountainCliffs(x, y, elevation, mountains, river, lavaRiver, poisonRiver, road, &info);
-                    float terrain = m_world->height(x, y, elevation, cliffs, river, lavaRiver, poisonRiver,
-                                                    m_world->sandAmount(x, y, sample.humidity(), cliffs, desertness),
-                                                    road, mountains, &info, HeightFlagCaveMouths);
+                    const float sand = m_world->sandAmount(x, y, sample.humidity(), cliffs, desertness);
+                    float terrain = m_world->height(x, y, elevation, cliffs, river, lavaRiver, poisonRiver, sand, road,
+                                                    mountains, &info, HeightFlagCaveMouths);
+                    const float relief = m_world->terrainOffset(x, y, terrain, sample, info, roadDistance);
+                    reliefOffsets[columnIndex(i, j)] = relief;
+                    terrain += relief;
                     if (terrain > 0.0f && river > 0.5f) {
                         // Passes elevation as the height.
                         terrain = m_world->villageHeight(x, y, elevation, &info);
@@ -840,27 +893,10 @@ bool WorldMap::update(const plasma::Vector<3, Fixed> &position, int level)
                         rise = (std::max)(rise,
                                           m_world->monumentTop(x, y, info, dungeon, terrain, water) - floor(terrain));
                     }
-                    int ceiling = (int)m_world->height(x, y, elevation, cliffs, river, lavaRiver, poisonRiver,
-                                                       m_world->sandAmount(x, y, sample.humidity(), cliffs, desertness),
-                                                       road, mountains, &info, HeightFlagSkipPlaceShape);
-                    if (top > ceiling) {
-                        ceiling = top;
-                    }
-                    ceiling += rise;
-                    if (first) {
-                        lowest = top;
-                        highest = ceiling;
-                        first = false;
-                    } else {
-                        if (top < lowest) {
-                            lowest = top;
-                        }
-                        if (ceiling > highest) {
-                            highest = ceiling;
-                        }
-                    }
-                    heights[i + g_mapRegionBorder +
-                            (g_mapRegionBorder + j) * (g_mapRegionSize + 2 * g_mapRegionBorder)] = top;
+                    const float ceiling = m_world->height(x, y, elevation, cliffs, river, lavaRiver, poisonRiver, sand,
+                                                          road, mountains, &info, HeightFlagSkipPlaceShape) +
+                                          relief;
+                    recordHeight(i, j, top, (std::max)(top, (int)ceiling) + rise);
                 }
             }
             region->sprite->resize(g_mapRegionSize + 2 * g_mapRegionBorder, g_mapRegionSize + 2 * g_mapRegionBorder,
@@ -869,12 +905,10 @@ bool WorldMap::update(const plasma::Vector<3, Fixed> &position, int level)
             // tops up to its own top, then the structures standing on it.
             float farFade = (std::max)(0.0f, (std::min)(1.0f, (float)(level - 2) * 0.2f));
             for (int i = -g_mapRegionBorder; i < g_mapRegionBorder + g_mapRegionSize; i++) {
-                Sleep(0);
                 for (int j = -g_mapRegionBorder; j < g_mapRegionBorder + g_mapRegionSize; j++) {
                     int x = mapRegionX * regionSize + i * scale;
                     int y = mapRegionY * regionSize + j * scale;
-                    int top = heights[i + g_mapRegionBorder +
-                                      (g_mapRegionBorder + j) * (g_mapRegionSize + 2 * g_mapRegionBorder)];
+                    const int top = heights[columnIndex(i, j)];
                     // The voxel of the column's top; the structures move it.
                     int z = top / scale - lowest / scale;
                     plasma::Vector<2, int> land = m_world->findRegion(x, y);
@@ -890,11 +924,6 @@ bool WorldMap::update(const plasma::Vector<3, Fixed> &position, int level)
                                 plasma::Vector<3, int>(x, y, top));
                         }
                     }
-                    bool water = false;
-                    World::BiomeSample sample;
-                    m_world->biomeSample(x, y, sample);
-                    World::AreaInfo info;
-                    m_world->fillAreaInfo(x, y, info);
                     int bottom = z;
                     if (i > -2) {
                         bottom = (std::min)(
@@ -924,6 +953,11 @@ bool WorldMap::update(const plasma::Vector<3, Fixed> &position, int level)
                                             scale -
                                         lowest / scale + 1);
                     }
+                    bool water = false;
+                    World::BiomeSample sample;
+                    m_world->biomeSample(x, y, sample);
+                    World::AreaInfo info;
+                    m_world->fillAreaInfo(x, y, info);
                     BlockProperties<float> block;
                     float road = m_world->streetAmount(x, y, info.type, info.influence);
                     float lava = sample.lavaWeight(info.type, info.influence);
@@ -942,12 +976,18 @@ bool WorldMap::update(const plasma::Vector<3, Fixed> &position, int level)
                         m_world->mountainCliffs(x, y, elevation, mountains, river, lavaRiver, poisonRiver, road, &info);
                     float sandWeight = m_world->sandAmount(x, y, humidity, cliffs, desertness);
                     float enclave = sample.enclave(info.type, info.influence);
+                    const float relief = reliefOffsets[columnIndex(i, j)];
                     float terrain = m_world->height(x, y, elevation, cliffs, river, lavaRiver, poisonRiver, sandWeight,
-                                                    road, mountains, &info, 0);
-                    float heightWest = m_world->height(x - 1, y, 0);
-                    float heightEast = m_world->height(x + 1, y, 0);
-                    float heightSouth = m_world->height(x, y - 1, 0);
-                    float heightNorth = m_world->height(x, y + 1, 0);
+                                                    road, mountains, &info, 0) +
+                                    relief;
+                    const auto nearbyHeight = [this](int px, int py) { return m_world->terrainHeight(px, py, 0); };
+                    float heightWest = nearbyHeight(x - 1, y);
+                    float heightEast = nearbyHeight(x + 1, y);
+                    float heightSouth = nearbyHeight(x, y - 1);
+                    float heightNorth = nearbyHeight(x, y + 1);
+                    const ReliefSurface reliefSurface =
+                        World::reliefSurface(m_world->m_alphaTerrain != nullptr, relief, terrain, heightWest,
+                                             heightEast, heightSouth, heightNorth, desertness);
                     if (top <= 0 || river > 0.5f) {
                         // Water (a sea column, or a river in a valley): bluer with depth, greener in the undead lands,
                         // and at the far zoom levels faded towards the ground's colour.
@@ -993,19 +1033,22 @@ bool WorldMap::update(const plasma::Vector<3, Fixed> &position, int level)
                         if (!water) {
                             block = m_world->surfaceBlock(x, y, blockZ, terrain, heightWest, heightEast, heightSouth,
                                                           heightNorth, cliffs, temperature, humidity, sandWeight, 0.0f,
-                                                          road, lava, undead, enclave, lavaRiver, poisonRiver);
+                                                          road, lava, undead, enclave, lavaRiver, poisonRiver,
+                                                          reliefSurface);
                             if (cliffs > 0.5f && scale < 128 &&
+                                !reliefSurface.isStone((int)std::floor(terrain) - blockZ) &&
                                 m_world->caveDensity(x, y, info.type, info.influence) > 0.0f) {
                                 // Over a cave the surface is blended with the block under it and the cave's cover, as
                                 // Zone::generate blends a cave's floor.
                                 float caveHeight =
                                     m_world->height(x, y, elevation, cliffs, river, lavaRiver, poisonRiver, sandWeight,
-                                                    road, mountains, &info, HeightFlagSkipPlaceAndHills);
+                                                    road, mountains, &info, HeightFlagSkipPlaceAndHills) +
+                                    relief;
                                 float blockHeight = (float)blockZ;
                                 block = m_world->surfaceBlock(x, y, floor(terrain), terrain, heightWest, heightEast,
                                                               heightSouth, heightNorth, cliffs, temperature, humidity,
                                                               sandWeight, 0.0f, road, lava, undead, enclave, lavaRiver,
-                                                              poisonRiver);
+                                                              poisonRiver, reliefSurface);
                                 BlockProperties<float> below = m_world->computeBlock(x, y, (int)(blockHeight - 1.0f));
                                 plasma::Vector<3, float> color = below.color;
                                 float surfaceBlend =
@@ -1079,7 +1122,8 @@ bool WorldMap::update(const plasma::Vector<3, Fixed> &position, int level)
                             if (abs(di) > reach || abs(dj) > reach) {
                                 continue;
                             }
-                            if (type >= BuildingOak && type <= BuildingPalmPlaza || type == BuildingGreatOak) {
+                            if ((type >= BuildingOak && type <= BuildingPalmPlaza || type == BuildingGreatOak) &&
+                                m_world->treeFitsTerrain(buildingCellX, buildingCellY, type)) {
                                 // Types 1..8, round about the cell's point (the centre for type 8): a trunk and a
                                 // crown in the colours of the vegetation there.
                                 if (type == BuildingGreatOak) {
@@ -1108,8 +1152,10 @@ bool WorldMap::update(const plasma::Vector<3, Fixed> &position, int level)
                                         pointSample.undead(treePointInfo.type, treePointInfo.influence);
                                     float treePointTemperature =
                                         pointSample.temperature(treePointInfo.type, treePointInfo.influence);
-                                    float treePointStreets = m_world->streetAmount(
-                                        point[0], point[1], treePointInfo.type, treePointInfo.influence);
+                                    float treePointRoadDistance = 0.0f;
+                                    float treePointStreets =
+                                        m_world->streetAmount(point[0], point[1], treePointInfo.type,
+                                                              treePointInfo.influence, &treePointRoadDistance);
                                     float treePointMountains = pointSample.mountains();
                                     float treePointWetness = pointSample.wetness();
                                     float treePointWater = m_world->valleyWater(
@@ -1134,6 +1180,8 @@ bool WorldMap::update(const plasma::Vector<3, Fixed> &position, int level)
                                         m_world->height(point[0], point[1], treePointElevation, treePointCliffs,
                                                         treePointWater, 0.0f, 0.0f, treePointSand, treePointStreets,
                                                         treePointMountains, &treePointInfo, HeightFlagCaveMouths);
+                                    ground += m_world->terrainOffset(point[0], point[1], ground, pointSample,
+                                                                     treePointInfo, treePointRoadDistance);
                                     float treePointEnclave =
                                         pointSample.enclave(treePointInfo.type, treePointInfo.influence);
                                     int size =
@@ -1724,7 +1772,6 @@ bool WorldMap::update(const plasma::Vector<3, Fixed> &position, int level)
             }
             // Third pass: the voxels under an overhang are darkened.
             for (int vx = 0; vx < region->sprite->sizeX(); vx++) {
-                Sleep(0);
                 for (int vy = 0; vy < region->sprite->sizeY(); vy++) {
                     bool open = true;
                     bool covered = false;
@@ -1792,19 +1839,28 @@ bool WorldMap::update(const plasma::Vector<3, Fixed> &position, int level)
                     }
                 }
             }
-            // The name of the land (BlocksPerLand cells), at its centre.
+            // A larger land's centre can lie in a map region that starts in the preceding land.
             if (scale >= 128) {
-                int landX = floorDivide(mapRegionX * regionSize, BlocksPerLand);
-                int landY = floorDivide(mapRegionY * regionSize, BlocksPerLand);
-                int landBiome = m_world->landBiome(landX, landY);
-                plasma::Vector<2, int> center = m_world->landCenter(landX, landY);
-                if (center[0] >= mapRegionX * regionSize && center[0] < (mapRegionX + 1) * regionSize &&
-                    center[1] >= mapRegionY * regionSize && center[1] < (mapRegionY + 1) * regionSize) {
-                    MapMission area;
-                    area.type = landBiome;
-                    area.position =
-                        plasma::Vector<3, int>(center[0], center[1], (int)m_world->height(center[0], center[1], 0));
-                    region->areas.push_back(area);
+                const int minX = mapRegionX * regionSize;
+                const int minY = mapRegionY * regionSize;
+                const int maxX = minX + regionSize;
+                const int maxY = minY + regionSize;
+                const int landSpan = m_world->blocksPerLand();
+                const int firstLandX = floorDivide(minX, landSpan);
+                const int firstLandY = floorDivide(minY, landSpan);
+                const int lastLandX = m_world->m_largerBiomes ? floorDivide(maxX - 1, landSpan) : firstLandX;
+                const int lastLandY = m_world->m_largerBiomes ? floorDivide(maxY - 1, landSpan) : firstLandY;
+                for (int landX = firstLandX; landX <= lastLandX; ++landX) {
+                    for (int landY = firstLandY; landY <= lastLandY; ++landY) {
+                        const auto center = m_world->landCenter(landX, landY);
+                        if (center[0] < minX || center[0] >= maxX || center[1] < minY || center[1] >= maxY)
+                            continue;
+                        MapMission area;
+                        area.type = m_world->landBiome(landX, landY);
+                        area.position =
+                            plasma::Vector<3, int>(center[0], center[1], int(m_world->height(center[0], center[1], 0)));
+                        region->areas.push_back(area);
+                    }
                 }
             }
             // The flight point of the 2048-block cell: a hashed block in it (the salts 292054 and 98800 draw x and y
@@ -1879,7 +1935,6 @@ bool WorldMap::update(const plasma::Vector<3, Fixed> &position, int level)
             // 2..12).
             if (scale < 64) {
                 for (int a = 0; a < regionSize / 16; a++) {
-                    Sleep(0);
                     for (int b = 0; b < regionSize / 16; b++) {
                         int buildingCellX = a + floorDivide(mapRegionX * regionSize, 16);
                         int buildingCellY = b + floorDivide(mapRegionY * regionSize, 16);

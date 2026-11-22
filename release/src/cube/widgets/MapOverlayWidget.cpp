@@ -14,7 +14,7 @@
 #include "cube/World.h"
 #include "cube/WorldLayout.h"
 #include "cube/WorldMap.h"
-#include "plasma/D3D11Engine.h"
+#include "plasma/Engine.h"
 #include "plasma/FontEngine.h"
 #include "plasma/ScalableFont.h"
 #include "plasma/Transformation.h"
@@ -414,8 +414,9 @@ void MapOverlayWidget::draw()
                 plasma::Vector<3, float> screen = m_game->m_worldMap->m_projectionMatrix * view;
                 if (!(screen[0] >= -1.0f && screen[0] <= 1.0f && screen[1] >= -1.0f && screen[1] <= 1.0f))
                     continue;
-                int areaX = floorDivide(place.position[0], BlocksPerLand);
-                int areaY = floorDivide(place.position[1], BlocksPerLand);
+                const int landSpan = m_game->m_world->blocksPerLand();
+                int areaX = floorDivide(place.position[0], landSpan);
+                int areaY = floorDivide(place.position[1], landSpan);
                 std::array<int, 2> area = {areaX, areaY};
                 if (m_game->m_world->m_localCreature->m_playerData->discoveredAreas.find(area) ==
                     m_game->m_world->m_localCreature->m_playerData->discoveredAreas.end())

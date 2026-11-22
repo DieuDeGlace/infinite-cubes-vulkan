@@ -4,12 +4,15 @@
 #include <algorithm>
 // See cube/World.h.
 #include "cube/World.h"
+#include "cube/Progression.h"
+#include "cube/AlphaTerrain.h"
 #include "cube/WorldLayout.h"
 #include "cube/Sight.h"
 #include "cube/MathConstants.h"
 
 #include <algorithm>
 #include <iostream>
+#include <limits>
 #include <sstream>
 
 #include "cube/Creature.h"
@@ -25,6 +28,7 @@
 #include "cube/ServerUpdateIds.h"
 #include "cube/WorldIds.h"
 #include "cube/ZoneIds.h"
+#include "cube/TravelParty.h"
 
 namespace cube {
 
@@ -84,12 +88,11 @@ const int MaxFlightTime = 30000;
 // A biome's weight falls off with the squared distance beyond the nearest biome at this rate per block (a desert's
 // more slowly).
 const float BiomeBlendRate = 0.0004f;
+const float MountainElevationBlendRate = 0.0003f;
 const float DesertBlendRate = 0.0003f;
 // A flight counts as far while more than 1000 blocks remain of a route of more than 16384.
 const double FarFlightRemaining = 1000.0;
 const double FarFlightLength = 16384.0;
-// A land's centre lies at least this far inside it.
-const int LandCenterMargin = 1024;
 // onAttack: creatures within this range of the target that could fight the attacker start with this threat against it.
 const float AllyAlertRange = 8.0f;
 const float AllyAlertThreat = 0.5f;
@@ -320,8 +323,13 @@ enum ManaAbilityMembership : unsigned long long {
         (1ULL << (AbilityMonsterCharge - AbilityBlock))
 };
 
-World::World(SpriteManager *spriteManager)
+World::World(SpriteManager *spriteManager, std::shared_ptr<AlphaTerrain> alphaTerrain, bool largerBiomes,
+             bool pyroProgression, bool aquaticEnemies)
     : m_spriteManager(spriteManager),
+      m_alphaTerrain(std::move(alphaTerrain)),
+      m_largerBiomes(largerBiomes),
+      m_pyroProgression(pyroProgression),
+      m_aquaticEnemies(aquaticEnemies),
       m_aiManager(this),
       m_spawnTable(this),
       m_isClient(false),
@@ -430,6 +438,7 @@ World::~World()
 
 void World::addCreature(Creature *creature)
 {
+    creature->m_pyroProgression = m_pyroProgression;
     m_creatures.push_back(creature);
     m_creaturesById[creature->m_id] = creature;
 }
@@ -786,6 +795,7 @@ void World::applyHit(const ServerUpdates::HitPacket &hit)
                 m_state.m_deadCreatures.find(id); // the result is not used
             }
         }
+        const auto [player, xp] = progressionKillCredit(attacker, *target);
         if (target->m_aggro.empty()) {
             ServerUpdates::KillPacket kill;
             kill.killerId = 0;
@@ -796,9 +806,12 @@ void World::applyHit(const ServerUpdates::HitPacket &hit)
                 ServerUpdates::KillPacket kill;
                 kill.killerId = entry.first;
                 kill.targetId = hit.targetId;
+                kill.experience = entry.first == player ? xp : 0;
                 m_serverUpdates.m_killPacketList.push_back(kill);
             }
         }
+        if (xp && !target->m_aggro.count(player))
+            m_serverUpdates.m_killPacketList.push_back({player, hit.targetId, xp});
         // Every creature forgets the dead one and its owner.
         for (Creature *other : m_creatures) {
             if (other->m_opponentId == hit.targetId || other->m_opponentId == target->m_petId) {
@@ -910,7 +923,7 @@ float World::BiomeSample::biomeElevation(int areaType, float areaInfluence)
         result = signedSmoothStep(std::min(3.0f - t * 4.0f, 1.0f)) * 100.0f;
     }
     if (mountainsSquaredDistance >= 0.0f && mountainsSquaredDistance >= nearestSquaredDistance) {
-        float t = std::max(1.0f - (mountainsSquaredDistance - nearestSquaredDistance) * 0.0003f * 0.0003f, 0.0f);
+        float t = weight(mountainsSquaredDistance, MountainElevationBlendRate);
         result += (noise(x * 0.0015 + 6667.0, y * 0.0015 + 33322.0) + 1.0f) * (smoothStep(t) * 100.0f);
     }
     result += noise(x * 0.001 + 247412.0, y * 0.001 + 8128321.0) * 20.0f;
@@ -922,6 +935,26 @@ float World::BiomeSample::biomeElevation(int areaType, float areaInfluence)
         result += smoothStep(std::min(areaInfluence + areaInfluence, 1.0f)) * (1.0f - result);
     }
     return result;
+}
+
+float World::BiomeSample::alphaReliefStrength() const
+{
+    float mountainDistance = -1.0f;
+    float savannahDistance = -1.0f;
+    for (int i = 0; i < 3; ++i) {
+        for (int j = 0; j < 3; ++j) {
+            const float distance = squaredDistances[i][j];
+            if (biomes[i][j] == BiomeMountains && (mountainDistance < 0.0f || distance < mountainDistance))
+                mountainDistance = distance;
+            else if (biomes[i][j] == BiomeSavannah && (savannahDistance < 0.0f || distance < savannahDistance))
+                savannahDistance = distance;
+        }
+    }
+
+    // Use the same distance falloff as Steam's mountain elevation and savannah humidity.
+    const float mountains = smoothStep(weight(mountainDistance, MountainElevationBlendRate));
+    const float savannah = smoothStep(weight(savannahDistance, BiomeBlendRate));
+    return 1.0f + 0.25f * mountains - 0.4f * savannah;
 }
 
 // The regions' border noise: noise at frequency 0.001 (offsets 8473, 9438 plus the world's offset) with a hashed
@@ -1459,16 +1492,16 @@ BlockProperties<float> World::columnBlock(int x, int y, int z, float cliffs, flo
 }
 
 // Raises a light level to a neighbour's, which counts as 25 at least.
-static inline void brighten(unsigned int &level, unsigned int neighbor)
+static inline void brighten(unsigned int &level, unsigned int neighbor, unsigned int minimum)
 {
-    if (neighbor < 25)
-        neighbor = 25;
+    if (neighbor < minimum)
+        neighbor = minimum;
     if (neighbor > level)
         level = neighbor;
 }
 
-// Every row of columns yields the processor once (Sleep(0)): the zone mesher runs on a thread of its own.
-void computeLight(ZoneNeighborhood &zones, gfx::ByteGrid &light, int x0, int y0, int x1, int y1, int margin)
+void computeLight(ZoneNeighborhood &zones, gfx::ByteGrid &light, int x0, int y0, int x1, int y1, int margin,
+                  bool alphaLighting)
 {
     gfx::ByteGrid spread(zones, x0, y0, x1, y1, margin);
 
@@ -1476,7 +1509,6 @@ void computeLight(ZoneNeighborhood &zones, gfx::ByteGrid &light, int x0, int y0,
     // of the solid blocks passed, raised again by a transparent block's own light. A block of type 20 gives its own
     // light and opens the sky again. A solid block gets the level that reaches it.
     for (int x = x0 - margin; x < x1 + margin; x++) {
-        Sleep(0);
         for (int y = y0 - margin; y < y1 + margin; y++) {
             Field *field = zones.field(x, y);
             if (field) {
@@ -1484,6 +1516,14 @@ void computeLight(ZoneNeighborhood &zones, gfx::ByteGrid &light, int x0, int y0,
                 int level = 255;
                 for (int i = (int)field->m_blocks.size() - 1; i >= 0; i--) {
                     Block block = field->getBlock(i);
+                    if (alphaLighting) {
+                        if (!isTransparent(block))
+                            sky = false;
+                        const unsigned char value = sky || block.type == BlockLightSource ? 255 : 0;
+                        light.set(x, y, field->m_baseZ + i, value);
+                        spread.set(x, y, field->m_baseZ + i, value);
+                        continue;
+                    }
                     if (block.type == BlockLightSource) {
                         sky = true;
                         level = block.lightLevel;
@@ -1512,8 +1552,8 @@ void computeLight(ZoneNeighborhood &zones, gfx::ByteGrid &light, int x0, int y0,
     // six (25 at least), once per round, and the result becomes the next round's light. The margin bounds the rounds
     // (three fewer than its width).
     for (int round = 0; round < margin - 3; round++) {
+        bool changed = false;
         for (int x = x0 - margin + 1; x < x1 + margin - 1; x++) {
-            Sleep(0);
             for (int y = y0 - margin + 1; y < y1 + margin - 1; y++) {
                 Field *field = zones.field(x, y);
                 if (field) {
@@ -1521,27 +1561,30 @@ void computeLight(ZoneNeighborhood &zones, gfx::ByteGrid &light, int x0, int y0,
                         int z = field->m_baseZ + i;
                         Block block = field->getBlock(i);
                         if (isTransparent(block) && light.lookup(x, y, z) != 255) {
-                            // Reads the height again from here on.
+                            const unsigned int minimum = alphaLighting ? 0 : 25;
                             unsigned int level = 0;
-                            brighten(level, light.lookup(x - 1, y, field->m_baseZ + i));
+                            brighten(level, light.lookup(x - 1, y, z), minimum);
                             if (level < 255)
-                                brighten(level, light.lookup(x + 1, y, field->m_baseZ + i));
+                                brighten(level, light.lookup(x + 1, y, z), minimum);
                             if (level < 255)
-                                brighten(level, light.lookup(x, y - 1, field->m_baseZ + i));
+                                brighten(level, light.lookup(x, y - 1, z), minimum);
                             if (level < 255)
-                                brighten(level, light.lookup(x, y + 1, field->m_baseZ + i));
+                                brighten(level, light.lookup(x, y + 1, z), minimum);
                             if (level < 255)
-                                brighten(level, light.lookup(x, y, field->m_baseZ + i - 1));
+                                brighten(level, light.lookup(x, y, z - 1), minimum);
                             if (level < 255)
-                                brighten(level, light.lookup(x, y, field->m_baseZ + i + 1));
-                            spread.set(x, y, field->m_baseZ + i, (unsigned char)((int)level * 85 / 100));
+                                brighten(level, light.lookup(x, y, z + 1), minimum);
+                            const auto next = (unsigned char)(level * 85 / 100);
+                            changed |= next != light.lookup(x, y, z);
+                            spread.set(x, y, z, next);
                         }
                     }
                 }
             }
         }
+        if (alphaLighting && !changed)
+            break;
         for (int x = x0 - margin; x < x1 + margin; x++) {
-            Sleep(0);
             for (int y = y0 - margin; y < y1 + margin; y++) {
                 Field *field = zones.field(x, y);
                 if (field) {
@@ -1557,7 +1600,6 @@ void computeLight(ZoneNeighborhood &zones, gfx::ByteGrid &light, int x0, int y0,
 
     // The transparent blocks of the rectangle itself keep their light in the first colour byte.
     for (int x = x0; x < x1; x++) {
-        Sleep(0);
         for (int y = y0; y < y1; y++) {
             Field *field = zones.field(x, y);
             if (field) {
@@ -1663,7 +1705,7 @@ void World::despawnFarCreatures()
     }
     std::list<Creature *> farCreatures;
     for (Creature *creature : m_creatures) {
-        if (creature->m_entityData.hostilityType != HostilityPlayer) {
+        if (creature->m_entityData.hostilityType != HostilityPlayer && !isTravelPartyMember(creature->m_id)) {
             bool isFar = true;
             for (Creature *player : players) {
                 isFar =
@@ -1700,6 +1742,20 @@ void World::dropItem(const Item &source, const plasma::Vector<3, Fixed> &positio
                      int quantity, Creature *creature, long long ownerId)
 {
     Item item(source);
+    if (m_pyroProgression && item.isProgressionGear() && item.formulaCategory >= 0 &&
+        (!creature || creature->m_entityData.hostilityType != HostilityPlayer)) {
+        const auto region =
+            creature ? creature->m_entityData.region : findRegion(position[0].toBlock(), position[1].toBlock());
+        auto *killer = creature && creature->m_entityData.hp <= 0.0f ? creatureByID(creature->m_opponentId) : nullptr;
+        if (killer && killer->m_entityData.hostilityType == HostilityPet)
+            killer = creatureByID(killer->m_entityData.ownerId);
+        const int playerLevel = killer && killer->m_entityData.hostilityType == HostilityPlayer
+                                    ? std::clamp(killer->m_entityData.progressionLevel, 1, progression::MaxLevel)
+                                    : regionLevel(region);
+        const int enemyLevel = creature ? creature->m_entityData.progressionLevel : playerLevel;
+        item.setGearLevel(
+            progression::lootLevel(playerLevel, enemyLevel, item.category, item.id, item.modifier, item.material));
+    }
     ZoneItem zoneItem;
     zoneItem.position = position;
     zoneItem.rotation = angle;
@@ -1948,6 +2004,11 @@ void World::dropLoot(Creature *creature)
             if (creature->m_entityData.appearance.appearanceFlags & AppearanceFlagLarge) {
                 coins *= 20.0f;
             }
+            int coinValue = 1;
+            if (m_pyroProgression) {
+                coins = float(std::clamp(creature->m_entityData.level + 1, 1, 5));
+                coinValue = std::max(1, creature->m_entityData.progressionLevel / int(coins));
+            }
             for (int i = 0; (float)i < coins; i++) {
                 Item item;
                 item.category = ItemCategoryCoin;
@@ -1957,7 +2018,7 @@ void World::dropLoot(Creature *creature)
                          creature->m_entityData.position + plasma::Vector<3, Fixed>(plasma::Vector<3, float>(
                                                                1.0f - (float)rand() * 2.0f / (float)RAND_MAX,
                                                                1.0f - (float)rand() * 2.0f / (float)RAND_MAX, 0.0f)),
-                         (float)rand() * 360.0f / (float)RAND_MAX, 0.75f, 1, creature, 0);
+                         (float)rand() * 360.0f / (float)RAND_MAX, 0.75f, coinValue, creature, 0);
             }
         }
     }
@@ -2705,36 +2766,6 @@ void World::fillWeaponShop(Inventory &shop, Creature *shopkeeper)
     for (Item &item : items) {
         shop.add(item, (std::max)(0, 1 - boughtCount(item, shopkeeper->m_id)), 0);
     }
-}
-
-// The position displaced as in biomeSample (warp noise at 0.0003 and 0.0006, offsets 8432, 9438 and 567, 1223, an
-// eighth of a land).
-plasma::Vector<2, int> World::findNearestRegion(int x, int y)
-{
-    plasma::Vector<2, float> offset;
-    offset[0] = noise(x * 0.0003 + 8432.0, y * 0.0006 + 9438.0) * 0.125f * BlocksPerLand;
-    offset[1] = noise(x * 0.0006 + 567.0, y * 0.0003 + 1223.0) * 0.125f * BlocksPerLand;
-    Fixed positionX = Fixed(x) + offset[0];
-    Fixed positionY = Fixed(y) + offset[1];
-    int minX = floorDivide(positionX.toBlock(), BlocksPerLand) - 1;
-    int minY = floorDivide(positionY.toBlock(), BlocksPerLand) - 1;
-    int maxX = floorDivide(positionX.toBlock(), BlocksPerLand) + 1;
-    int maxY = floorDivide(positionY.toBlock(), BlocksPerLand) + 1;
-    float best = -1.0f;
-    plasma::Vector<2, int> result(-1, -1);
-    for (int i = minX; i <= maxX; i++) {
-        for (int j = minY; j <= maxY; j++) {
-            plasma::Vector<2, int> center = landCenter(i, j);
-            float dx = (float)(positionX - Fixed(center[0]));
-            float dy = (float)(positionY - Fixed(center[1]));
-            float squaredDistance = dy * dy + dx * dx;
-            if (best < 0.0f || squaredDistance < best) {
-                best = squaredDistance;
-                result = plasma::Vector<2, int>(i, j);
-            }
-        }
-    }
-    return result;
 }
 
 plasma::Vector<2, int> World::findRegion(const plasma::Vector<3, Fixed> &position)
@@ -4017,13 +4048,102 @@ BiomeIdentifier World::landBiome(int x, int y)
     return biome;
 }
 
-plasma::Vector<2, int> World::landCenter(int x, int y)
+namespace {
+
+// The channel noise magnitudes at a block. Generation reads each column's and its neighbours' many times.
+struct ChannelNoises {
+    enum : unsigned char {
+        River = 1,
+        Tributary = 2,
+        Lava = 4,
+        Poison = 8
+    };
+    int x = 0, y = 0;
+    unsigned char known = 0;
+    float river = 0.0f, tributary = 0.0f, lava = 0.0f, poison = 0.0f;
+};
+
+ChannelNoises &channelNoises(int x, int y)
 {
-    // A hashed point (salts 58014, 460082) of the land (its index shifted by 13: BlocksPerLand) at least
-    // LandCenterMargin inside it.
-    return plasma::Vector<2, int>(
-        (x << 13) + LandCenterMargin + random(x + 58014, y) % (BlocksPerLand - 2 * LandCenterMargin),
-        random(x + 460082, y) % (BlocksPerLand - 2 * LandCenterMargin) + (y << 13) + LandCenterMargin);
+    // The noise tables are fixed, so the values depend on the position alone.
+    static thread_local std::array<ChannelNoises, 4096> cache;
+    auto &entry = cache[(unsigned(x) * 73856093u ^ unsigned(y) * 19349663u) % cache.size()];
+    if (entry.x != x || entry.y != y) {
+        entry = {};
+        entry.x = x;
+        entry.y = y;
+    }
+    return entry;
+}
+
+} // namespace
+
+// The three channel noises, five times their magnitude: 0 along a channel's centre line, rising away from it.
+float World::riverRidge(int x, int y, float wetlands)
+{
+    ChannelNoises &noises = channelNoises(x, y);
+    double fineY = y * 0.0005;
+    double middleY = y * 0.0025;
+    double coarseY = y * 0.01;
+    double fineX = x * 0.0005;
+    double middleX = x * 0.0025;
+    double coarseX = x * 0.01;
+    if (!(noises.known & ChannelNoises::River)) {
+        float waterChannelNoise = noise(middleX + 23123.0, middleY + 42432.0) * 0.5f;
+        waterChannelNoise += noise(fineX + 23123.0, fineY + 42432.0);
+        waterChannelNoise += noise(coarseX + 23123.0, coarseY + 42432.0) * 0.1f;
+        noises.river = fabs(waterChannelNoise);
+        noises.known |= ChannelNoises::River;
+    }
+    float ridge = noises.river;
+    if (wetlands > 0.00001f) {
+        if (!(noises.known & ChannelNoises::Tributary)) {
+            float wetlandTributaryNoise = noise(middleX + 53455.0, middleY + 6547.0) * 0.5f;
+            wetlandTributaryNoise += noise(fineX + 5553445.0, fineY + 123321.0);
+            wetlandTributaryNoise += noise(coarseX + 6455445.0, coarseY + 33223.0) * 0.1f;
+            noises.tributary = (float)fabs(wetlandTributaryNoise);
+            noises.known |= ChannelNoises::Tributary;
+        }
+        ridge *= 1.0f - (1.0f - noises.tributary) * wetlands;
+    }
+    return ridge * 5.0f;
+}
+
+float World::lavaRidge(int x, int y)
+{
+    ChannelNoises &noises = channelNoises(x, y);
+    if (!(noises.known & ChannelNoises::Lava)) {
+        float n = noise(x * 0.0023 + 330003.0, y * 0.0023 + 323322.0) * 0.5f;
+        n += noise(x * 0.00045 + 88989.0, y * 0.00045 + 1001.0);
+        n += noise(x * 0.01 + 558587.0, y * 0.01 + 198743.0) * 0.1f;
+        noises.lava = fabs(n);
+        noises.known |= ChannelNoises::Lava;
+    }
+    return noises.lava * 5.0f;
+}
+
+float World::poisonRidge(int x, int y)
+{
+    ChannelNoises &noises = channelNoises(x, y);
+    if (!(noises.known & ChannelNoises::Poison)) {
+        float n = noise(x * 0.0025 + 5253.0, y * 0.0025 + 809834.0) * 0.5f;
+        n += noise(x * 0.0005 + 6664.0, y * 0.0005 + 7567567.0);
+        n += noise(x * 0.01 + 80084.0, y * 0.01 + 5664.0) * 0.1f;
+        noises.poison = fabs(n);
+        noises.known |= ChannelNoises::Poison;
+    }
+    return noises.poison * 5.0f;
+}
+
+// A channel's depth profile: 1 on its centre line, 0 from a ridge of 1. Ridges above 0.5 are compressed by a cube.
+float World::channelProfile(float ridge)
+{
+    if (ridge > 0.5f) {
+        ridge = (ridge - 0.5f) * 0.5f;
+        ridge = ridge * ridge * ridge + 0.5f;
+    }
+    float valley = std::max(1.0f - ridge, 0.0f);
+    return valley * valley;
 }
 
 // Lava channels (a hand-tuned noise profile): three noises (frequencies 0.0023, 0.00045, 0.01 at weights 0.5, 1, 0.1)
@@ -4034,16 +4154,7 @@ float World::lavaChannels(int x, int y, float road, float firelands, float mount
 {
     float result = 0.0f;
     if (firelands > 0.5f) {
-        float n = noise(x * 0.0023 + 330003.0, y * 0.0023 + 323322.0) * 0.5f;
-        n += noise(x * 0.00045 + 88989.0, y * 0.00045 + 1001.0);
-        n += noise(x * 0.01 + 558587.0, y * 0.01 + 198743.0) * 0.1f;
-        float ridge = fabs(n) * 5.0f;
-        if (ridge > 0.5f) {
-            ridge = (ridge - 0.5f) * 0.5f;
-            ridge = ridge * ridge * ridge + 0.5f;
-        }
-        float peak = std::max(1.0f - ridge, 0.0f);
-        result = peak * peak * ((firelands - 0.5f) * 2.0f) * (1.0f - mountains);
+        result = channelProfile(lavaRidge(x, y)) * ((firelands - 0.5f) * 2.0f) * (1.0f - mountains);
     }
     if (info->type != PlaceNone) {
         if (info->type == PlaceLavaLake) {
@@ -4116,10 +4227,21 @@ void World::leaveZones()
     LeaveCriticalSection(&m_zonesLock);
 }
 
+namespace {
+
+std::string worldStateKey(int seed, const std::string &name)
+{
+    if (seed == 123 && (name == "world" || name == " world"))
+        return "state"; // Preserve the original world's save key.
+    return "world:" + std::to_string(seed) + ":" + name;
+}
+
+} // namespace
+
 void World::loadState()
 {
     BytesIO data;
-    if (m_database.read("state", data)) {
+    if (m_database.read(worldStateKey(m_seed, m_worldName), data)) {
         Serializer(&data).loadWorldState(m_state);
     }
 }
@@ -4723,10 +4845,11 @@ plasma::Vector<3, Fixed> World::nearestShrine(const plasma::Vector<3, Fixed> &po
     }
     if (bestDistance < 0.0) {
         // The sites (siteInZone) of the places within a land's span.
-        int firstX = floorDivide(tileCoordinate(position[0] - Fixed(BlocksPerLand)), BlocksPerPlace / BlocksPerCell);
-        int lastX = floorDivide(tileCoordinate(position[0] + Fixed(BlocksPerLand)), BlocksPerPlace / BlocksPerCell);
-        int firstY = floorDivide(tileCoordinate(position[1] - Fixed(BlocksPerLand)), BlocksPerPlace / BlocksPerCell);
-        int lastY = floorDivide(tileCoordinate(position[1] + Fixed(BlocksPerLand)), BlocksPerPlace / BlocksPerCell);
+        const Fixed span(blocksPerLand());
+        int firstX = floorDivide(tileCoordinate(position[0] - span), BlocksPerPlace / BlocksPerCell);
+        int lastX = floorDivide(tileCoordinate(position[0] + span), BlocksPerPlace / BlocksPerCell);
+        int firstY = floorDivide(tileCoordinate(position[1] - span), BlocksPerPlace / BlocksPerCell);
+        int lastY = floorDivide(tileCoordinate(position[1] + span), BlocksPerPlace / BlocksPerCell);
         for (int regionX = firstX; regionX <= lastX; ++regionX) {
             for (int regionY = firstY; regionY <= lastY; ++regionY) {
                 plasma::Vector<2, int> cell(regionX * 64 + 1 + random(regionX + 148289, regionY) % 62,
@@ -4803,30 +4926,13 @@ void World::onAttack(Creature *attacker, Creature *target)
     }
 }
 
-void World::onKill(const ServerUpdates::KillPacket &kill)
-{
-    if (m_localCreature && kill.killerId == m_localCreature->m_id) {
-        // The lookup's result is not used.
-        Creature *victim = creatureByID(kill.targetId);
-    }
-}
-
 // Poison channels: lavaChannels' profile with noises of their own (0.0025, 0.0005, 0.01), scaled by the undead lands,
 // suppressed in places (0.1, 10) and on roads (0.4).
 float World::poisonChannels(int x, int y, float road, float undead, float mountains, AreaInfo *info)
 {
     float result = 0.0f;
     if (undead > 0.5f) {
-        float n = noise(x * 0.0025 + 5253.0, y * 0.0025 + 809834.0) * 0.5f;
-        n += noise(x * 0.0005 + 6664.0, y * 0.0005 + 7567567.0);
-        n += noise(x * 0.01 + 80084.0, y * 0.01 + 5664.0) * 0.1f;
-        float ridge = fabs(n) * 5.0f;
-        if (ridge > 0.5f) {
-            ridge = (ridge - 0.5f) * 0.5f;
-            ridge = ridge * ridge * ridge + 0.5f;
-        }
-        result = std::max(1.0f - ridge, 0.0f);
-        result *= result;
+        result = channelProfile(poisonRidge(x, y));
         result *= (undead - 0.5f) * 2.0f;
         result *= 1.0f - mountains;
     }
@@ -5119,22 +5225,28 @@ float World::rayDistance(const plasma::Vector<3, Fixed> &position, const plasma:
     return std::min(range, distance);
 }
 
+void World::detachCreature(Creature *creature)
+{
+    const auto found = std::find(m_creatures.begin(), m_creatures.end(), creature);
+    if (found != m_creatures.end()) {
+        m_creatures.erase(found);
+        m_creaturesById.erase(creature->m_id);
+    }
+}
+
 void World::removeCreature(Creature *creature)
 {
     if (creature) {
-        for (std::list<Creature *>::iterator it = m_creatures.begin(); it != m_creatures.end(); ++it) {
-            if (*it == creature) {
-                m_creatures.erase(it);
-                break;
-            }
-        }
-        m_creaturesById.erase(creature->m_id);
+        detachCreature(creature);
         delete creature;
     }
 }
 
 void World::removeCreatures()
 {
+    m_travelParties.clear();
+    m_travelPartyElapsed = 0.0f;
+    m_travelSpawnDelay = 0.0f;
     for (Creature *creature : m_creatures) {
         delete creature;
     }
@@ -5303,7 +5415,7 @@ void World::saveState(const WorldState &state)
     if (m_worldName.size() != 0) {
         BytesIO data;
         Serializer(&data).saveWorldState(state);
-        m_database.write("state", data);
+        m_database.write(worldStateKey(m_seed, m_worldName), data);
     }
 }
 
@@ -5393,8 +5505,9 @@ static inline float roadWeight(float squaredDistance)
 // types the roads fade with the place's influence. The streets (hand-tuned): positions warped by noise (0.0025, 0.005;
 // up to 128 and 32 blocks), links to the neighbouring places by hashes (salts 531813 east-west, 2648358 north-south),
 // a village pattern at 0.01 within influence 0.4 (from 0.0001), and a knee at 120 compressing by 119.5.
-float World::streetAmount(int x, int y, int areaType, float areaInfluence)
+float World::streetAmount(int x, int y, int areaType, float areaInfluence, float *roadDistance)
 {
+    float nearestSquared = std::numeric_limits<float>::max();
     float warpX = noise(x * 0.0025 + 2346.0, y * 0.005 + 64565.0) * 128.0f;
     warpX += noise(x * 0.005 + 4234.0, y * 0.01 + 5434545.0) * 32.0f;
     float warpY = noise(x * 0.005 + 23432.0, y * 0.0025 + 2342344.0) * 128.0f;
@@ -5446,6 +5559,7 @@ float World::streetAmount(int x, int y, int areaType, float areaInfluence)
                         }
                     }
                     weight = roadWeight(squaredDistance);
+                    nearestSquared = (std::min)(nearestSquared, squaredDistance);
                 }
             }
             hashX = i + 1;
@@ -5484,6 +5598,7 @@ float World::streetAmount(int x, int y, int areaType, float areaInfluence)
                         }
                     }
                     weight *= roadWeight(squaredDistance);
+                    nearestSquared = (std::min)(nearestSquared, squaredDistance);
                 }
             }
             hashX = i;
@@ -5518,6 +5633,7 @@ float World::streetAmount(int x, int y, int areaType, float areaInfluence)
                         }
                     }
                     weight *= roadWeight(squaredDistance);
+                    nearestSquared = (std::min)(nearestSquared, squaredDistance);
                 }
             }
             hashX = i;
@@ -5552,6 +5668,7 @@ float World::streetAmount(int x, int y, int areaType, float areaInfluence)
                         }
                     }
                     weight *= roadWeight(squaredDistance);
+                    nearestSquared = (std::min)(nearestSquared, squaredDistance);
                 }
             }
             result *= weight;
@@ -5570,6 +5687,10 @@ float World::streetAmount(int x, int y, int areaType, float areaInfluence)
                areaType == PlaceRock || areaType == PlacePlain || areaType == PlaceHill || areaType == PlaceGrove ||
                areaType == PlaceGlade) {
         result = 1.0f - (1.0f - result) * outside;
+    }
+    if (roadDistance) {
+        // The distance in the warped road space to the nearest road's centre line.
+        *roadDistance = std::sqrt(nearestSquared);
     }
     result *= 120.0f;
     if (result > 0.5f) {
@@ -6447,12 +6568,39 @@ int World::structureLevel(int x, int y, int type)
     return floorToInt(std::max(top + 1.0f, 0.0f) * 0.5f * 2.0f + 2.0f + 0.0f);
 }
 
+ReliefSurface World::reliefSurface(bool alphaTerrain, float offset, float height, float heightWest, float heightEast,
+                                   float heightSouth, float heightNorth, float desertness)
+{
+    // Stone walls on every cliff of an Alpha world, including those where the relief is capped to nothing, so one wall
+    // does not change from stone to earth where the relief ends. The grass cap stays on the relief: elsewhere the native
+    // surface keeps its roads, paths and sand.
+    if (!alphaTerrain)
+        return {};
+
+    const float lowestNeighbor = (std::min)({heightWest, heightEast, heightSouth, heightNorth});
+    // The uppermost block carries ground cover. A drop of two or more exposes stone below it.
+    const int depth = floorToInt(height) - floorToInt(lowestNeighbor) - 1;
+    // Without relief the native ground keeps its earth on the low steps of fields, plots and road edges; only its tall
+    // terrace walls turn to stone.
+    constexpr int NativeWallDepth = 3;
+    if (offset == 0.0f && depth < NativeWallDepth)
+        return {};
+    return {(std::max)(0, depth), offset != 0.0f && desertness <= 0.5f};
+}
+
+BlockProperties<float> World::reliefStoneBlock(int x, int y, int z, float temperature, float humidity, float firelands,
+                                               float undead)
+{
+    return BlockProperties<float>(rockColor(x, y, z, temperature, humidity, firelands, undead), BlockRock);
+}
+
 // The surface: lava, poison, sand, paths and beaches above 0.5 of their weights, faded towards grey (128) by the fade,
 // and cliff exposure blended at three per block of rise.
 BlockProperties<float> World::surfaceBlock(int x, int y, int z, float height, float heightWest, float heightEast,
                                            float heightSouth, float heightNorth, float cliffs, float temperature,
                                            float humidity, float sand, float fade, float path, float firelands,
-                                           float undead, float enchantedForest, float lava, float poison)
+                                           float undead, float enchantedForest, float lava, float poison,
+                                           const ReliefSurface &relief)
 {
     if (lava > 0.5f) {
         BlockProperties<float> block(lavaColor(x, y), BlockLava);
@@ -6464,12 +6612,34 @@ BlockProperties<float> World::surfaceBlock(int x, int y, int z, float height, fl
         block.lightLevel = 255;
         return block;
     }
+    const int depth = floorToInt(height) - z;
+    if (relief.isStone(depth))
+        return reliefStoneBlock(x, y, z, temperature, humidity, firelands, undead);
+    if (relief.grassCap && depth <= 0) {
+        BlockProperties<float> cover =
+            coverBlock(x, y, z, height, temperature, humidity, sand, fade, path, firelands, undead, enchantedForest);
+        // Alpha blends the ridge surface into rock. Use the finished grade to place that blend on this terrain.
+        const float dx = (heightEast - heightWest) * 0.5f;
+        const float dy = (heightNorth - heightSouth) * 0.5f;
+        constexpr float GrassSlopeSquared = 0.8f * 0.8f;
+        constexpr float RockSlopeSquared = 2.2f * 2.2f;
+        const float steepness = (dx * dx + dy * dy - GrassSlopeSquared) / (RockSlopeSquared - GrassSlopeSquared);
+        const float stone = smoothStep(std::clamp(steepness, 0.0f, 1.0f));
+        if (stone > 0.0f) {
+            const auto rock = reliefStoneBlock(x, y, z, temperature, humidity, firelands, undead);
+            cover.color += (rock.color - cover.color) * stone;
+            if (stone > 0.5f)
+                cover.type = rock.type;
+        }
+        return cover;
+    }
+
     float riseWest = heightWest - height;
     float riseEast = heightEast - height;
     float riseSouth = heightSouth - height;
     float riseNorth = heightNorth - height;
-    if ((z < floorToInt(height) && z < floorToInt(heightWest) && z < floorToInt(heightEast) &&
-         z < floorToInt(heightSouth) && z < floorToInt(heightNorth)) ||
+    if ((depth > 0 && z < floorToInt(heightWest) && z < floorToInt(heightEast) && z < floorToInt(heightSouth) &&
+         z < floorToInt(heightNorth)) ||
         sand > 0.5f || path > 0.5f || isBeach(x, y, height)) {
         BlockProperties<float> block =
             columnBlock(x, y, z, cliffs, temperature, humidity, firelands, undead, enchantedForest);
@@ -6491,9 +6661,9 @@ BlockProperties<float> World::surfaceBlock(int x, int y, int z, float height, fl
     highest = std::max(riseNorth, highest);
     BlockProperties<float> block =
         coverBlock(x, y, z, height, temperature, humidity, sand, fade, path, firelands, undead, enchantedForest);
-    if ((z < floorToInt(height) && lowest < -1.0f) || highest > 1.0f) {
+    if ((depth > 0 && lowest < -1.0f) || highest > 1.0f) {
         float steepness;
-        if (z < floorToInt(height) && lowest < -1.0f) {
+        if (depth > 0 && lowest < -1.0f) {
             steepness = -lowest;
         } else {
             steepness = highest;
@@ -6673,29 +6843,7 @@ float World::valleyWater(int x, int y, float road, float firelands, float undead
 {
     float result = 0.0f;
     if (firelands < 0.5f && undead < 0.5f) {
-        double fineY = y * 0.0005;
-        double coarseY = y * 0.01;
-        double middleY = y * 0.0025;
-        double fineX = x * 0.0005;
-        double middleX = x * 0.0025;
-        double coarseX = x * 0.01;
-        float waterChannelNoise = noise(middleX + 23123.0, middleY + 42432.0) * 0.5f;
-        waterChannelNoise += noise(fineX + 23123.0, fineY + 42432.0);
-        waterChannelNoise += noise(coarseX + 23123.0, coarseY + 42432.0) * 0.1f;
-        float ridge = fabs(waterChannelNoise);
-        if (wetlands > 0.00001f) {
-            float wetlandTributaryNoise = noise(middleX + 53455.0, middleY + 6547.0) * 0.5f;
-            wetlandTributaryNoise += noise(fineX + 5553445.0, fineY + 123321.0);
-            wetlandTributaryNoise += noise(coarseX + 6455445.0, coarseY + 33223.0) * 0.1f;
-            ridge *= 1.0f - (1.0f - (float)fabs(wetlandTributaryNoise)) * wetlands;
-        }
-        ridge *= 5.0f;
-        if (ridge > 0.5f) {
-            ridge = (ridge - 0.5f) * 0.5f;
-            ridge = ridge * ridge * ridge + 0.5f;
-        }
-        float valley = std::max(1.0f - ridge, 0.0f);
-        result = (1.0f - std::min(firelands + firelands, 1.0f)) * (valley * valley) *
+        result = (1.0f - std::min(firelands + firelands, 1.0f)) * channelProfile(riverRidge(x, y, wetlands)) *
                  (1.0f - std::min(undead + undead, 1.0f));
     }
     if (info->type != PlaceNone) {
@@ -6787,23 +6935,18 @@ void World::updateChanges()
 }
 
 // Zones more than twice the radius away count as at the capped distance (4 r^2).
-bool World::removeFarZone(int radius)
+bool World::removeFarZone(const plasma::Vector<2, int> &center, int radius)
 {
-    EnterCriticalSection(&m_zoneMeshCriticalSection);
-    int zoneY = floorDivide(m_localCreature->m_entityData.position[1].toBlock(), BlocksPerZone);
-    int zoneX = floorDivide(m_localCreature->m_entityData.position[0].toBlock(), BlocksPerZone);
-    LeaveCriticalSection(&m_zoneMeshCriticalSection);
-
     // The loaded zone farthest from the player's, beyond the radius.
+    EnterCriticalSection(&m_zonesLock);
     std::unordered_map<unsigned long long, Zone *>::iterator farthest = m_zones.end();
     double farthestDistance = radius * radius;
-    EnterCriticalSection(&m_zonesLock);
     for (std::unordered_map<unsigned long long, Zone *>::iterator entry = m_zones.begin(); entry != m_zones.end();
          ++entry) {
         Zone *zone = entry->second;
         if (zone) {
-            int dx = zoneX - zone->m_position[0];
-            int dy = zoneY - zone->m_position[1];
+            int dx = center[0] - zone->m_position[0];
+            int dy = center[1] - zone->m_position[1];
             double distance = (double)dx * (double)dx + (double)dy * (double)dy;
             if (abs(dx) > 2 * radius || abs(dy) > 2 * radius)
                 distance = radius * radius * 4;
@@ -6903,7 +7046,8 @@ plasma::Vector<2, int> World::randomStartCell()
     int zoneX = (int)(cos(angle) * distance);
     int zoneY = (int)(sin(angle) * distance);
     for (;;) {
-        plasma::Vector<2, int> cell = siteInZone(++zoneX, zoneY);
+        ++zoneX;
+        plasma::Vector<2, int> cell = siteInZone(zoneX, zoneY);
         if (zoneBuildingType(cell[0], cell[1]) != BuildingShrineOfLife)
             continue;
         plasma::Vector<2, int> position = BlocksPerCell * cell;
@@ -7671,6 +7815,13 @@ bool World::groundedFormula(const Item &item, Formula &formula, bool unused)
 void World::init(int seed, const std::string &name)
 {
     m_database.close();
+    m_regionLevels.clear();
+    m_hamletPlotLayouts.clear();
+    m_zonesWithChangedItems.clear();
+    m_zonesWithChangedObjects.clear();
+    m_projectiles.clear();
+    m_serverUpdates = ServerUpdates();
+    m_soloLevel = 1;
     m_seed = seed;
     m_worldName = name;
     srand(seed);
@@ -7728,11 +7879,24 @@ void World::init(int seed, const std::string &name)
     m_state.m_day = 1;
     m_state.m_time = StartHour * MillisecondsPerHour;
     if (!m_isClient && name.size()) {
-        std::stringstream path;
-        path << "Save/world.db";
-        m_database.open(path.str());
+        m_database.open(std::string(saveDirectory()) + "/world.db");
         loadState();
     }
+}
+
+const char *World::saveDirectory() const
+{
+    if (m_largerBiomes)
+        return m_alphaTerrain ? "Save/AlphaTerrain-v1-Biomes150" : "Save/Biomes150-v1";
+    return m_alphaTerrain ? AlphaTerrain::SaveDirectory : "Save";
+}
+
+int World::networkProtocolVersion() const
+{
+    // Both peers need the same Alpha terrain profile.
+    const int protocol = m_alphaTerrain ? AlphaTerrain::ProtocolVersion : 100100;
+    return protocol + (m_alphaTerrain ? 1 : 0) + (m_largerBiomes ? 2 : 0) + (m_pyroProgression ? 4 : 0) +
+           (m_aquaticEnemies ? 8 : 0);
 }
 
 // The wind (a hand-tuned profile): noises at 0.02 sampled at raw fixed-point phases, of amplitude 8 in x and y and
@@ -10005,6 +10169,7 @@ void World::updateTerritory(float milliseconds)
             creature->m_entityData.ownerId = resident->ownerId;
             creature->m_entityData.destination = resident->destination;
             creature->m_entityData.region = findRegion((int)resident->position[0], (int)resident->position[1]);
+            creature->m_pyroProgression = m_pyroProgression;
             creature->m_entityData.hp = creature->maxHP();
             creature->m_entityData.currentAbility = (unsigned char)resident->currentAbility;
             if (creature->m_entityData.currentAbility == AbilitySlowFall) {
@@ -13714,7 +13879,8 @@ void World::performAbility(Creature *creature, float milliseconds)
                 point = destination + (start - destination) * Fixed(1.0 - progress);
             float land = biomeElevationAt((int)point[0], (int)point[1]) + 200.0f;
             float terrain =
-                height((int)creature->m_entityData.position[0], (int)creature->m_entityData.position[1], 0) + 50.0f;
+                terrainHeight((int)creature->m_entityData.position[0], (int)creature->m_entityData.position[1], 0) +
+                50.0f;
             float lowest = 200.0f;
             point[2] = Fixed((std::max)(lowest, (std::max)(terrain, land)));
             if (isFlyingFar())
@@ -14234,7 +14400,8 @@ void World::despawnDeadCreatures(float milliseconds)
     for (Creature *creature : m_creatures) {
         if (!(creature->m_entityData.hp <= 0.0f) || creature->m_entityData.hostilityType == HostilityPlayer)
             continue;
-        m_state.m_deadCreatures.insert(creature->m_id);
+        if (!isTravelPartyMember(creature->m_id))
+            m_state.m_deadCreatures.insert(creature->m_id);
         int race = creature->m_entityData.race;
         if (creature->m_entityData.timeSinceAbility == 0.0f &&
             (race == RaceWaterBubble || race == RaceBomb || race == RaceBarrelTnt)) {
@@ -15503,7 +15670,10 @@ void World::updateStep(float milliseconds)
         m_localCreature->m_playerData->missionTimers = timers;
     }
     if (!m_isClient) {
+        if (m_pyroProgression)
+            updateProgressionLevels();
         updateTerritory(milliseconds);
+        updateTravelParties(milliseconds);
         despawnFarCreatures();
         despawnDeadCreatures(milliseconds);
     }
@@ -15727,7 +15897,9 @@ void World::updateStep(float milliseconds)
 
 Zone *World::generateZone(int x, int y)
 {
+    enterZones();
     Zone *zone = this->zone(x, y);
+    leaveZones();
     if (zone)
         return zone;
     srand((y << 10) + m_generationSeed + x); // a zone's seed: its y shifted by 10, plus x

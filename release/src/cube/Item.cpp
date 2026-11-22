@@ -1,4 +1,5 @@
 #include "cube/Item.h"
+#include "cube/Progression.h"
 
 #include <algorithm>
 #include <math.h>
@@ -349,6 +350,20 @@ int Item::getRarity(const plasma::Vector<2, int> &region) const
     return rarity;
 }
 
+// Item records are stored directly in saves and Steam packets. Gear uses the unused negative recipe values
+// to retain its assigned level without changing the size of the item record.
+int Item::gearLevel() const
+{
+    return isProgressionGear() && formulaCategory < 0 && formulaCategory >= -progression::MaxLevel ? -formulaCategory
+                                                                                                   : 1;
+}
+
+void Item::setGearLevel(int level)
+{
+    if (isProgressionGear())
+        formulaCategory = -std::clamp(level, 1, progression::MaxLevel);
+}
+
 float Item::hp(Creature *creature) const
 {
     if (category != ItemCategoryWeapon && category != ItemCategoryChest && category != ItemCategoryHands &&
@@ -462,6 +477,11 @@ int Item::maxSpiritCount() const
 
 float Item::power(Creature *creature, int spirits) const
 {
+    if (creature->m_pyroProgression && creature->m_entityData.hostilityType == HostilityPlayer && isProgressionGear()) {
+        const float base = progression::gearStrength(1, 0, 0);
+        const float strength = std::max(0.1f, progression::gearStrength(gearLevel(), rarity, modifier));
+        return strength / base * std::exp2(float(spirits) * 0.5f / maxSpiritCount());
+    }
     const plasma::Vector<2, int> *where;
     if (creature->m_entityData.hostilityType == HostilityPlayer ||
         creature->m_entityData.hostilityType == HostilityNeutral ||

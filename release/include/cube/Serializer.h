@@ -20,7 +20,7 @@ public:
     void writeItem(const Item &item);
 
     BytesIO *m_stream;
-    int m_version;       // Character format version, currently 11.
+    int m_version;       // Character format version written by saveCreature.
     int m_loadedVersion; // the format version of the character being read; sections depend on it
     int m_stateVersion;  // World-state format version, currently 44; written and checked at the start of the stream.
     int m_unused14;      // 0 (constructor); no other access

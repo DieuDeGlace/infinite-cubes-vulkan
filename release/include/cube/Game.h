@@ -4,6 +4,7 @@
 // types remain opaque.
 #pragma once
 #include <windows.h>
+#include <atomic>
 #include <list>
 #include <map>
 #include <set>
@@ -28,11 +29,11 @@
 #include "cube/ServerUpdates.h"
 
 namespace plasma {
-class D3D11Engine;
+class Engine;
 }
 
 namespace gfx {
-class D3D11Renderer;
+class Renderer;
 }
 
 namespace cube {
@@ -124,7 +125,7 @@ struct MenuEntry {
 
 class Game {
 public:
-    Game(World *world, WorldMap *worldMap, gfx::D3D11Renderer *renderer, plasma::D3D11Engine *engine, Audio *audio,
+    Game(World *world, WorldMap *worldMap, gfx::Renderer *renderer, plasma::Engine *engine, Audio *audio,
          const Options *options, const std::vector<ResolutionInfo> *displayModes);
     virtual ~Game();
 
@@ -139,9 +140,11 @@ public:
     // WinMain passes the key or button to bind to the controls widget.
     void assignControl(const Controls::Button &button);
     void cancelBinding();
-    // Sets the seed and name of the world to play (also in the local creature's PlayerData) and removes the other
-    // creatures.
-    void changeWorld(int seed, const std::string &name);
+    // Queues a world change for the start of a frame, before locking the zone meshes.
+    void changeWorld(int seed, const std::string &name, bool resumePosition = false);
+    void applyWorldChange();
+    void finishWorldLoad(); // Called with the zone meshes locked.
+    void resumeCharacter();
     void controlCharacter(double step, std::vector<NearbyCreature> &creatures);
     void craft();
     void createParticles(Sprite *sprite, const plasma::Matrix<float> &matrix,
@@ -268,6 +271,11 @@ public:
     void updateLights(int milliseconds);
     void updateSorting();
     void updateSpeech(double step);
+    bool talkAboutTownQuest(Creature &giver, std::vector<Dialog> &dialogs);
+    bool updateTownQuest(const ServerUpdates::KillPacket &kill);
+    // Gives the requests taken without targets an enemy group once one is near the player.
+    bool assignTownQuestTargets();
+    std::wstring townQuestSummary();
     void updateTextFx(int milliseconds);
     void updateUsableItems();
     // Refills m_vendorInventory: the sold items (newest first) for tab 1, else the shop of the vendor by its class.
@@ -289,8 +297,8 @@ public:
 
     World *m_world;
     WorldMap *m_worldMap;
-    gfx::D3D11Renderer *m_renderer;
-    plasma::D3D11Engine *m_engine;
+    gfx::Renderer *m_renderer;
+    plasma::Engine *m_engine;
     Audio *m_audio;
     KeyNames m_keyNames;
     Speech m_speech; // Constructed and destroyed with Game; supplied to Interface.
@@ -374,10 +382,11 @@ public:
     int m_musicDuckTime;              // Initially zero.
     int m_successMusicTime;           // Initially 0.
     std::list<Item> m_unusedItemList; // Constructed and destroyed only.
-    volatile bool
-        m_running; // Initially true; cleared before the destructor joins the worker threads, whose loops test it.
+    std::atomic<bool> m_running;
     int m_seed;
     std::string m_worldName;
+    bool m_waitingForTerrain = true;
+    bool m_placeOnTerrain = false;
     std::list<Particle> m_particles; // Records filled from a sprite's voxels.
     std::list<Light> m_lights;       // Records filled and aged by the game update.
     std::list<TextFX> m_textFx;

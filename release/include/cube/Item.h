@@ -168,6 +168,9 @@ struct Item {
     {
         return (unsigned char)(category - ItemCategoryWeapon) <= 6 || category == ItemCategoryEyePatch;
     }
+    bool isProgressionGear() const { return (unsigned char)(category - ItemCategoryWeapon) <= 6; }
+    int gearLevel() const;
+    void setGearLevel(int level);
     // Damage added by spirits: weaponDamage minus baseDamage.
     float upgradeDamage(Creature *creature) const;
     // Weapon damage for the creature, zero for other categories; summed by Creature::attackPower, spellPower and

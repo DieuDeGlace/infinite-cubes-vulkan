@@ -632,8 +632,28 @@ void Zone::generatePlants()
     plasma::Vector<2, int> center = m_world->placeCenter(placeX, placeY, m_world->isLargePlace(placeX, placeY));
     World::BiomeSample sample;
     m_world->biomeSample(center[0], center[1], sample);
+    const auto hasReedWater = [this](int x, int y, int z) {
+        if (!m_world->m_alphaTerrain)
+            return true;
+        constexpr int Reach = 4;
+        for (int dx = -Reach; dx <= Reach; ++dx) {
+            for (int dy = -Reach; dy <= Reach; ++dy) {
+                if (dx * dx + dy * dy > Reach * Reach)
+                    continue;
+                const int px = x + dx, py = y + dy;
+                if (contains(px, py)) {
+                    for (int level = z - 2; level <= z + 1; ++level)
+                        if (getBlock(px, py, level).type == BlockWater)
+                            return true;
+                } else if (m_world->hasSurfaceWater(px, py, z - 2, z + 1)) {
+                    // Sample the same river across a zone edge even when its neighbor has not generated.
+                    return true;
+                }
+            }
+        }
+        return false;
+    };
     for (int x = m_position[0] * BlocksPerZone; x < (m_position[0] + 1) * BlocksPerZone; ++x) {
-        Sleep(0);
         for (int y = m_position[1] * BlocksPerZone; y < m_position[1] * BlocksPerZone + BlocksPerZone; ++y) {
             Field *column = field(x, y);
             for (int index = 0; index < (int)column->m_blocks.size(); ++index) {
@@ -668,7 +688,8 @@ void Zone::generatePlants()
                     continue;
                 if (above.type == BlockAir && type == BlockWet) {
                     if (rand() % 2 != 0 && column->m_temperature > 0.2f) {
-                        if ((float)fabs((double)noise(x * 0.05 + 9843.0, y * 0.05 + 8437.0)) > 0.5f) {
+                        if ((float)fabs((double)noise(x * 0.05 + 9843.0, y * 0.05 + 8437.0)) > 0.5f &&
+                            hasReedWater(x, y, z)) {
                             Plant plant;
                             plant.position[0] = Fixed(x) + 0.5;
                             plant.position[1] = Fixed(y) + 0.5;
@@ -744,6 +765,8 @@ void Zone::generatePlants()
                     continue;
                 }
                 if (type == BlockRock) {
+                    if (column->m_firelands <= 0.5f)
+                        continue;
                     Plant plant;
                     plant.position[0] = Fixed(x) + 0.5;
                     plant.position[1] = Fixed(y) + 0.5;
@@ -858,7 +881,7 @@ void Zone::generatePlants()
                 float lava = sample.lavaWeight(info.type, info.influence);
                 float streetAmount = m_world->streetAmount(x, y, info.type, info.influence);
                 float valley = m_world->valleyWater(x, y, streetAmount, lava, undead, wetness, mountains, &info);
-                if (valley > 0.43f) {
+                if (valley > 0.43f && hasReedWater(x, y, z)) {
                     plant.rotation = (float)rand() * 360.0f / (float)RAND_MAX;
                     plant.type = PlantReed;
                     plant.scale = 0.09f;
@@ -1191,9 +1214,16 @@ void Zone::setBlock(int x, int y, int z, const Block &block)
         column->setBlock(z - base, block);
     }
     for (int below = z + 1; below < base; below++) {
-        Block generated =
-            m_world->columnBlock(x, y, below, column->m_mountainCliffs, column->m_temperature, column->m_humidity,
-                                 column->m_firelands, column->m_undead, column->m_enchantedForest);
+        Block generated;
+        if (column->m_reliefSurface.stoneDepth > 0 &&
+            column->m_reliefSurface.isStone((int)std::floor(column->m_height) - below)) {
+            generated = m_world->reliefStoneBlock(x, y, below, column->m_temperature, column->m_humidity,
+                                                  column->m_firelands, column->m_undead);
+        } else {
+            generated =
+                m_world->columnBlock(x, y, below, column->m_mountainCliffs, column->m_temperature, column->m_humidity,
+                                     column->m_firelands, column->m_undead, column->m_enchantedForest);
+        }
         column->setBlock(below - column->m_baseZ, generated);
     }
 }
@@ -2004,7 +2034,6 @@ void Zone::generate()
 
     // The terrain, column by column.
     for (int x = m_position[0] * BlocksPerZone; x < m_position[0] * BlocksPerZone + BlocksPerZone; x++) {
-        Sleep(0);
         for (int y = m_position[1] * BlocksPerZone; y < m_position[1] * BlocksPerZone + BlocksPerZone; y++) {
             Field &column = m_fields[(long long)(x - m_position[0] * BlocksPerZone) * BlocksPerZone +
                                      (y - m_position[1] * BlocksPerZone)];
@@ -2019,7 +2048,8 @@ void Zone::generate()
             column.m_firelands = sample.lavaWeight(info.type, info.influence);
             column.m_undead = sample.undead(info.type, info.influence);
             column.m_enchantedForest = sample.enclave(info.type, info.influence);
-            column.m_streetAmount = m_world->streetAmount(x, y, info.type, info.influence);
+            float roadDistance = 0.0f;
+            column.m_streetAmount = m_world->streetAmount(x, y, info.type, info.influence, &roadDistance);
             float wetness = sample.wetness();
             column.m_valleyWater = m_world->valleyWater(x, y, column.m_streetAmount, column.m_firelands,
                                                         column.m_undead, wetness, column.m_mountains, &info);
@@ -2031,9 +2061,11 @@ void Zone::generate()
                 m_world->mountainCliffs(x, y, elevation, column.m_mountains, column.m_valleyWater,
                                         column.m_lavaChannels, column.m_poisonChannels, column.m_streetAmount, &info);
             column.m_sandAmount = m_world->sandAmount(x, y, column.m_humidity, column.m_mountainCliffs, desertness);
-            float terrainHeight = m_world->height(x, y, elevation, column.m_mountainCliffs, column.m_valleyWater,
-                                                  column.m_lavaChannels, column.m_poisonChannels, column.m_sandAmount,
-                                                  column.m_streetAmount, column.m_mountains, &info, 0);
+            const float nativeHeight = m_world->height(
+                x, y, elevation, column.m_mountainCliffs, column.m_valleyWater, column.m_lavaChannels,
+                column.m_poisonChannels, column.m_sandAmount, column.m_streetAmount, column.m_mountains, &info, 0);
+            const float relief = m_world->terrainOffset(x, y, nativeHeight, sample, info, roadDistance);
+            const float terrainHeight = nativeHeight + relief;
             column.m_height = terrainHeight;
 
             bool hasSnowCap = false;
@@ -2050,17 +2082,21 @@ void Zone::generate()
                     setBlock(x, y, z, water);
                 }
             } else {
-                float heightWest = m_world->height(x - 1, y, 0);
-                float heightEast = m_world->height(x + 1, y, 0);
-                float heightSouth = m_world->height(x, y - 1, 0);
-                float heightNorth = m_world->height(x, y + 1, 0);
+                const auto nearbyHeight = [this](int px, int py) { return m_world->terrainHeight(px, py, 0); };
+                float heightWest = nearbyHeight(x - 1, y);
+                float heightEast = nearbyHeight(x + 1, y);
+                float heightSouth = nearbyHeight(x, y - 1);
+                float heightNorth = nearbyHeight(x, y + 1);
+                column.m_reliefSurface =
+                    World::reliefSurface(m_world->m_alphaTerrain != nullptr, relief, terrainHeight, heightWest,
+                                         heightEast, heightSouth, heightNorth, desertness);
                 int ground = floor(terrainHeight);
                 Block surface;
                 surface = m_world->surfaceBlock(x, y, ground, terrainHeight, heightWest, heightEast, heightSouth,
                                                 heightNorth, column.m_mountainCliffs, column.m_temperature,
                                                 column.m_humidity, column.m_sandAmount, 0.0f, column.m_streetAmount,
                                                 column.m_firelands, column.m_undead, column.m_enchantedForest,
-                                                column.m_lavaChannels, column.m_poisonChannels);
+                                                column.m_lavaChannels, column.m_poisonChannels, column.m_reliefSurface);
                 setBlock(x, y, floor(terrainHeight), surface);
                 if (column.m_sandAmount <= 0.5f && column.m_streetAmount <= 0.5f && terrainHeight > 0.0f) {
                     if (m_world->hasLyingSnow(x, y, column.m_temperature, heightWest, heightEast, heightSouth,
@@ -2086,6 +2122,8 @@ void Zone::generate()
             float craterFloor;
             float craterHeight;
             if (m_world->groundCrater(x, y, info, column.m_streetAmount, &craterFloor, &craterHeight)) {
+                craterFloor += relief;
+                craterHeight += relief;
                 for (int z = floor(craterFloor); z <= floor(craterHeight); z++) {
                     Block block;
                     block =
@@ -2274,11 +2312,11 @@ void Zone::generate()
             if (column.m_mountainCliffs > 0.5f) {
                 float density = m_world->caveDensity(x, y, info.type, info.influence);
                 if (density > 0.0f) {
-                    Sleep(0);
                     float caveHeight =
                         m_world->height(x, y, elevation, column.m_mountainCliffs, column.m_valleyWater,
                                         column.m_lavaChannels, column.m_poisonChannels, column.m_sandAmount,
-                                        column.m_streetAmount, column.m_mountains, &info, HeightFlagSkipPlaceAndHills);
+                                        column.m_streetAmount, column.m_mountains, &info, HeightFlagSkipPlaceAndHills) +
+                        relief;
                     // The cave: its ceiling up to 40 blocks of noise (0.01) above the cave floor, its fill light
                     // (0.07) up to 127, its vertical spread 0.06 +- 0.025 (noise at 0.02), the solidness weighted by
                     // depth (a tenth per block from 0.5) and carved below 0.5; the surface colours fade in over 3.3
@@ -3026,7 +3064,6 @@ void Zone::generate()
                         // gets a position for the cell's list (kind 21), one of the crop plants of the field type, or
                         // (one even column in 120 of a type 27 field) a type 116 entity.
                         for (int x = cellX * BlocksPerCell; x < cellX * BlocksPerCell + 16; x++) {
-                            Sleep(0);
                             for (int y = cellY * BlocksPerCell; y < cellY * BlocksPerCell + 16; y++) {
                                 float distance = m_world->placeSquaredDistance(info.center, x, y);
                                 float influence = m_world->placeInfluence(info.type, info.large, distance);
@@ -3793,7 +3830,6 @@ void Zone::generate()
                         int wallX1 = occupiedEast ? 16 : 15;
                         for (int x = 0; x < 16; x++) {
                             for (int y = 0; y < 16; y++) {
-                                Sleep(0);
                                 // A column of the room: its floor is lowered into a stair where an occupied
                                 // neighbour's floor lies lower within the opening, its ceiling limited by the
                                 // neighbour's next storey along the wall; the walls' corners stand where no diagonal
@@ -6240,7 +6276,7 @@ void Zone::generate()
                     center[0] = cellX * BlocksPerCell + 8;
                     center[1] = cellY * BlocksPerCell + 8;
                 }
-                float groundHeight = m_world->height(center[0], center[1], HeightFlagCaveMouths);
+                float groundHeight = m_world->terrainHeight(center[0], center[1], HeightFlagCaveMouths);
                 bool sunken = groundHeight < 0.0f;
                 if (sunken) {
                     groundHeight = 0.0f;
@@ -6266,7 +6302,8 @@ void Zone::generate()
                     }
                 }
                 if (!isOutsideZone(center[0], center[1], (int)((float)landmarkHorizontalExtent * 1.25f), m_position[0],
-                                   m_position[1])) {
+                                   m_position[1]) &&
+                    m_world->treeFitsTerrain(cellX, cellY, type)) {
                     // The landmark's draws are seeded by a hash of its cell (modulo 10000000).
                     srand(fastRandom(cellX, cellY) % 10000000);
                     groundHeight += 1.0f;
@@ -6628,8 +6665,8 @@ void Zone::generate()
     // block: 5 on type 18, 7..14 on the types 23..30, 6 and 2 by the flags of the block above, else 1 above sea level
     // (with 16 for the ground types 4, 5, 9, 10 and 14 not under water, and 17 for type 6).
     for (int x = 0; x < BlocksPerZone; x += 2) {
+        Sleep(0);
         for (int y = 0; y < BlocksPerZone; y += 2) {
-            Sleep(0);
             int px = m_position[0] * BlocksPerZone + x + rand() % 2;
             int py = m_position[1] * BlocksPerZone + y + rand() % 2;
             int cellX = toCell(px);
@@ -7376,6 +7413,8 @@ void Zone::generate()
             }
         }
     }
+    if (m_world->m_aquaticEnemies)
+        addAquaticResidents();
     // The entities and items as generated, and the region of every natural item.
     m_initialStaticEntities = m_staticEntities;
     m_initialItems = m_items;

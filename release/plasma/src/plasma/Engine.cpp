@@ -1087,7 +1087,15 @@ bool Engine::readPlasmaFileIntoNode(const std::wstring &path, Node *target, int 
         return true;
     }
     if (extension == L"PLG" || extension == L"PLD" || extension == L"PLX") {
-        readPLXFile(stream, target, flags, page, keys);
+        try {
+            readPLXFile(stream, target, flags, page, keys);
+        } catch (IOException &error) {
+            if (error.m_fileName.empty()) {
+                error.m_fileName = NarrowString(path);
+                error.m_message.insert(0, error.m_fileName);
+            }
+            throw;
+        }
         stream.close();
         return true;
     }

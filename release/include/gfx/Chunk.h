@@ -3,9 +3,11 @@
 #pragma once
 #include <array>
 #include <list>
+#include <vector>
 #include "plasma/Vector.h"
 #include "cube/Fixed.h"
 #include "gfx/RendererIds.h"
+#include "gfx/WaterLily.h"
 
 namespace gfx {
 
@@ -22,6 +24,8 @@ struct ChunkBuffer {
     int triangleCounts[ChunkPassCount];        // Triangle counts for each index buffer (index count / 3).
     // Zeroed by the constructor.
     int baseZ;
+    // Decorations built and replaced together with this slice's water mesh.
+    std::vector<WaterLily> waterLilies;
 };
 
 struct Chunk {
@@ -38,7 +42,8 @@ struct Chunk {
     float squaredCameraDistance;
 
     int remeshTime;
-    bool needsRemesh; // set with remeshTime; cleared by updateChunk
+    bool needsRemesh;       // set with remeshTime; cleared when a rebuild is queued
+    bool meshReady = false; // A published mesh can be empty.
 
     std::array<plasma::Vector<4, float>, 16> lightPositions;
     std::array<plasma::Vector<4, float>, 16> lightColors;

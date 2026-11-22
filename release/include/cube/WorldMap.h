@@ -14,11 +14,12 @@
 #include "cube/StructureCell.h"
 
 namespace plasma {
-class D3D11Engine;
+class Engine;
 }
 
 namespace gfx {
 class SpriteBatch;
+struct QuestMarker;
 }
 
 namespace cube {
@@ -95,7 +96,7 @@ struct WorldMapZoom {
 
 class WorldMap {
 public:
-    WorldMap(World *world, plasma::D3D11Engine *engine);
+    WorldMap(World *world, plasma::Engine *engine);
     virtual ~WorldMap();
 
     void cleanUp();
@@ -111,8 +112,9 @@ public:
     // line from the character to m_selectedFlightPoint or to its flight destination. The region under the engine's
     // pointer is ray cast for m_cursorPosition and m_hoveredRegion unless allowBlocking is set, which also halves the
     // radius. frameTime and controlKeyDown are not read.
-    void render(gfx::SpriteBatch &batch, const plasma::Vector<3, Fixed> &center, int cursorX, int cursorY, int width,
-                int height, const plasma::Vector<3, float> &angles, int zoom, float viewScaleFactor, int frameTime,
+    void render(gfx::SpriteBatch &batch, std::vector<gfx::QuestMarker> &questMarkers,
+                const plasma::Vector<3, Fixed> &center, int cursorX, int cursorY, int width, int height,
+                const plasma::Vector<3, float> &angles, int zoom, float viewScaleFactor, int frameTime,
                 bool controlKeyDown, bool passiveView);
     // Keeps a copy of a creature (its entity data and animation state timers) under its id, to show it on the map;
     // unmarkCreature drops it.
@@ -139,7 +141,7 @@ public:
     }
 
     World *m_world;
-    plasma::D3D11Engine *m_engine;
+    plasma::Engine *m_engine;
     plasma::Matrix<float> m_projectionMatrix;
     plasma::Matrix<float> m_viewMatrix;
     // Opaque record storage.
@@ -156,6 +158,9 @@ public:
     bool m_selectedFlightTargetIsCreature;
     plasma::Vector<2, int> m_selectedMarker;
     bool m_flightmasterMode;
+    // The villagers with a request to offer, refreshed while the map shows. Givers already asked show at their quest.
+    std::vector<long long> m_townQuestGivers;
+    unsigned int m_townQuestGiversTime = 0;
     int m_totalGenerationTime;
     // Opaque element storage.
     std::vector<WorldMapZoom> m_levels;

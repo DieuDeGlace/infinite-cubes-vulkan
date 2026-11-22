@@ -5,7 +5,9 @@
 namespace cube {
 
 Field::Field()
-    : m_baseZ(0)
+    : m_temperature(0.0f),
+      m_valleyWater(0.0f),
+      m_baseZ(0)
 {}
 
 Field::~Field() {}

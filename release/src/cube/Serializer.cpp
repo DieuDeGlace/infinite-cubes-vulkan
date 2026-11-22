@@ -4,12 +4,60 @@
 
 #include "cube/Zone.h"
 #include "cube/CreatureIds.h"
+#include "cube/Progression.h"
 
 namespace cube {
 
+namespace {
+constexpr int TownQuestSaveVersion = 12;
+constexpr int ProgressionSaveVersion = 13;
+constexpr int HairGradientSaveVersion = 14;
+
+void loadTownQuests(BytesIO &stream, std::vector<TownQuest> &quests)
+{
+    int count = 0;
+    stream.read(count);
+    // Read the fixed-width records without padding. A missing or truncated
+    // extension leaves the rest of the character loadable.
+    constexpr int RecordSize = 8 + 2 * 4 + 6 * 4 + TownQuest::TargetLimit * 8 + 2;
+    if (count < 0 || count > (stream.size() - stream.m_offset) / RecordSize)
+        return;
+    for (int i = 0; i < count; ++i) {
+        TownQuest quest;
+        std::uint8_t rewarded = 0;
+        stream.read(quest.giver);
+        stream.read(quest.worldSeed);
+        stream.read(quest.race);
+        stream.read(quest.giverPosition);
+        stream.read(quest.targetPosition);
+        stream.read(quest.targets);
+        stream.read(quest.defeated);
+        stream.read(rewarded);
+        quest.rewarded = rewarded != 0;
+        if (quest.giver && quest.needed())
+            quests.push_back(quest);
+    }
+}
+
+void saveTownQuests(BytesIO &stream, const std::vector<TownQuest> &quests)
+{
+    stream.write(int(quests.size()));
+    for (const auto &quest : quests) {
+        stream.write(quest.giver);
+        stream.write(quest.worldSeed);
+        stream.write(quest.race);
+        stream.write(quest.giverPosition);
+        stream.write(quest.targetPosition);
+        stream.write(quest.targets);
+        stream.write(quest.defeated);
+        stream.write(std::uint8_t(quest.rewarded));
+    }
+}
+}
+
 Serializer::Serializer(BytesIO *stream)
     : m_stream(stream),
-      m_version(11),
+      m_version(HairGradientSaveVersion),
       m_loadedVersion(0),
       m_stateVersion(44),
       m_unused14(0),
@@ -259,6 +307,25 @@ void Serializer::loadCreature(Creature *creature)
             creature->m_playerData->purchasesByShop[key].push_back(item);
         }
     }
+    if (m_loadedVersion >= TownQuestSaveVersion)
+        loadTownQuests(*m_stream, creature->m_playerData->townQuests);
+    if (m_loadedVersion >= ProgressionSaveVersion) {
+        m_stream->read(creature->m_entityData.progressionLevel);
+        creature->m_entityData.progressionLevel =
+            std::clamp(creature->m_entityData.progressionLevel, 1, progression::MaxLevel);
+    }
+    if (m_loadedVersion >= HairGradientSaveVersion && m_stream->size() - m_stream->m_offset >= 6) {
+        auto &hair = creature->m_playerData->hairGradient;
+        unsigned char enabled;
+        m_stream->read(enabled);
+        m_stream->read(hair.tips);
+        m_stream->read(hair.start);
+        m_stream->read(hair.blend);
+        hair.enabled = enabled == 1 && hair.start <= 100 && hair.blend <= 100;
+    }
+    if (creature->m_pyroProgression)
+        creature->m_entityData.xp = std::clamp(creature->m_entityData.xp, 0,
+                                               progression::xpToNext(creature->m_entityData.progressionLevel) - 1);
 }
 
 // Reads what saveWorldState wrote. A state of another format version keeps only the day and the time. The counts and
@@ -477,6 +544,13 @@ void Serializer::saveCreature(Creature *creature)
         for (const Item &item : entry.second)
             m_stream->write(item);
     }
+    saveTownQuests(*m_stream, creature->m_playerData->townQuests);
+    m_stream->write(creature->m_entityData.progressionLevel);
+    const auto &hair = creature->m_playerData->hairGradient;
+    m_stream->write(static_cast<unsigned char>(hair.enabled));
+    m_stream->write(hair.tips);
+    m_stream->write(hair.start);
+    m_stream->write(hair.blend);
 }
 
 // Writes the format version (m_stateVersion), the day and the time, the two id sets and, for every zone record, its

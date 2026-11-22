@@ -3,7 +3,6 @@
 #pragma once
 #include "cube/Race.h"
 #include "cube/Zone.h"
-#include <windows.h>
 #include <algorithm>
 #include <functional>
 
@@ -13,8 +12,7 @@ class Zone;
 
 // Tests whether a block lies in a noise-roughened ellipsoid with the lower half cut flat at the centre's height.
 bool ellipsoidContains(int x, int y, int z, int centerX, int centerY, int centerZ, int sizeX, int sizeY, int sizeZ);
-// Calls the function with every column (x, y) of x0 <= x < x1, y0 <= y < y1 that lies in the zone, yielding the thread
-// before each (Sleep(0)).
+// Calls the function for the columns inside both the rectangle and the zone.
 inline void forEachColumn(Zone *zone, int x0, int x1, int y0, int y1, const std::function<void(int, int)> &function)
 {
     x0 = (std::max)(x0, zone->m_position[0] * BlocksPerZone);
@@ -23,7 +21,6 @@ inline void forEachColumn(Zone *zone, int x0, int x1, int y0, int y1, const std:
     y1 = (std::min)(y1, zone->m_position[1] * BlocksPerZone + BlocksPerZone);
     for (int x = x0; x < x1; x++) {
         for (int y = y0; y < y1; y++) {
-            Sleep(0);
             function(x, y);
         }
     }

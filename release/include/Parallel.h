@@ -22,6 +22,7 @@ struct SchedulerPolicy {
 };
 struct CurrentScheduler {
     static void Create(const SchedulerPolicy &) {}
+    static void Detach() {}
 };
 }
 #endif

@@ -133,6 +133,7 @@ int decodeEntityData(BytesIO &bytes, Creature::EntityData &entityData)
     readField(bytes, mask, bit, entityData.factionKind);
     readField(bytes, mask, bit, entityData.factionVariant);
     readField(bytes, mask, bit, entityData.factionSeed);
+    readField(bytes, mask, bit, entityData.progressionLevel);
     return bytes.size();
 }
 
@@ -191,6 +192,7 @@ int encodeEntityData(BytesIO &bytes, const Creature::EntityData &previous, const
     addField(chunks, mask, bit, previous.factionKind, current.factionKind, full);
     addField(chunks, mask, bit, previous.factionVariant, current.factionVariant, full);
     addField(chunks, mask, bit, previous.factionSeed, current.factionSeed, full);
+    addField(chunks, mask, bit, previous.progressionLevel, current.progressionLevel, full);
 
     bytes.write(mask);
     for (const EntityDataChunk &chunk : chunks)

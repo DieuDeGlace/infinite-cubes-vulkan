@@ -5,9 +5,9 @@
 struct PixelInput
 {
     float4 position : SV_POSITION;
-    float4 color : COLOR;
-    float2 maskCoord : TEXCOORD0;
-    float2 textureCoord : TEXCOORD1;
+    [[vk::location(0)]] float4 color : COLOR;
+    [[vk::location(1)]] float2 maskCoord : TEXCOORD0;
+    [[vk::location(2)]] float2 textureCoord : TEXCOORD1;
 };
 
 #endif

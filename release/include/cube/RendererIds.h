@@ -11,6 +11,7 @@ enum RenderFlag {
     RenderFlagHideHud = 0x20,            // skip map compass and special item HUD
     RenderFlagLogo = 0x40,               // draw the Cube World logo
     RenderFlagOnlyPlayer = 0x80,         // skip world sky and other creatures
+    RenderFlagWaterLilies = 0x100,       // draw floating lily pads on inland water
 };
 
 enum SpritePassFlag {

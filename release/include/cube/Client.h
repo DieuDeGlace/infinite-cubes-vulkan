@@ -4,6 +4,7 @@
 // buffs, projectiles and chat messages. Packet formats are documented in Client.cpp.
 #pragma once
 #include <windows.h>
+#include <atomic>
 #include <list>
 #include <map>
 #include <set>
@@ -31,6 +32,8 @@ public:
     void addServerUpdates(const ServerUpdates &serverUpdates);
     void connect(CSteamID steamId);
     void disconnect();
+    // Joins the Steam receiver before releasing its queued packets.
+    void shutdown();
     bool isConnected();
     bool isHost(const CSteamID &steamId);
     bool isInvitedBy(const CSteamID &steamId);
@@ -41,9 +44,8 @@ public:
     void send(const CSteamID &steamId, BytesIO &packet);
     void update();
 
-    // Read by the receive thread (loops while set); cleared by the destructor before joining m_thread.
-    volatile bool m_runningCallbacks; // Initially true; cleared before the receive thread is joined.
-    std::thread m_thread;             // Background packet receive thread.
+    std::atomic<bool> m_runningCallbacks;
+    std::thread m_thread; // Background packet receive thread.
     std::list<ServerUpdates::HitPacket> m_hitPacketList;
     std::list<ServerUpdates::SoundPacket> m_soundPacketList;
     std::list<ServerUpdates::BuffPacket> m_buffPacketList;

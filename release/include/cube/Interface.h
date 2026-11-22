@@ -136,6 +136,8 @@ struct Interface {
         plasma::Node *m_leftLandButton;
         plasma::Node *m_rightLandButton;
         plasma::Node *m_missionTag; // "missiontag-white"
+        plasma::Node *m_townQuestTracker;
+        std::wstring m_townQuestText;
         PreviewWidget *m_previewWidget;
         std::vector<SpriteWidget *> m_equipmentSlots;
         SpriteWidget *m_quickItemSprites[QuickSlotCount];
@@ -196,6 +198,7 @@ struct Interface {
     plasma::Node *m_characterCreationNode;
     CharacterStyleWidget *m_characterStyleWidget;
     plasma::Node *m_characterStyleNode;
+    plasma::Node *m_secondHairNode;
     plasma::Node *m_createCharacterButton;
     plasma::Node *m_characterName; // "charactername"
     WorldSelection m_worldSelection;

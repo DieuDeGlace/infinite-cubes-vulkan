@@ -170,6 +170,7 @@ public:
     struct KillPacket {
         long long killerId;
         long long targetId;
+        int experience = 0;
     };
 
     // These members are never read.
