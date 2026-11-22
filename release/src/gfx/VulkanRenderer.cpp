@@ -410,7 +410,7 @@ void VulkanRenderer::drawQuestMarkers(const std::vector<QuestMarker> &markers, c
             continue;
 
         const bool giver = marker.icon == QuestIcon::Giver;
-        const int iconX = giver ? 188 : 16;
+        const int iconX = giver ? 188 : marker.icon == QuestIcon::Objective ? 96 : 16;
         constexpr int IconY = 16;
         const int iconWidth = giver ? 24 : 48;
         const int iconHeight = giver ? 48 : 52;

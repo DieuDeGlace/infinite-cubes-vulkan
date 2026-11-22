@@ -3,6 +3,7 @@
 
 namespace plasma {
 class Node;
+class Texture;
 }
 
 namespace cube {
@@ -17,6 +18,10 @@ public:
     // CharacterWidget displays the local character's statistics and equipment details.
 
     Game *m_game;
+    // Alpha's skill icons beside the climbing and swimming rows.
+    plasma::Texture *m_climbingIcon = nullptr;
+    plasma::Texture *m_swimmingIcon = nullptr;
+    plasma::Texture *m_ridingIcon = nullptr;
 };
 
 }

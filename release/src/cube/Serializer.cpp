@@ -1,5 +1,6 @@
 #include "cube/Serializer.h"
 
+#include <cmath>
 #include <iostream>
 
 #include "cube/Zone.h"
@@ -12,6 +13,10 @@ namespace {
 constexpr int TownQuestSaveVersion = 12;
 constexpr int ProgressionSaveVersion = 13;
 constexpr int HairGradientSaveVersion = 14;
+constexpr int EncounterSaveVersion = 15;
+constexpr int TownEncounterSaveVersion = 16;
+constexpr int TravelSkillSaveVersion = 17;
+constexpr int RidingSkillSaveVersion = 18;
 
 void loadTownQuests(BytesIO &stream, std::vector<TownQuest> &quests)
 {
@@ -39,6 +44,69 @@ void loadTownQuests(BytesIO &stream, std::vector<TownQuest> &quests)
     }
 }
 
+// The accepted encounters, as fixed-width records. A missing or truncated section leaves the character loadable.
+// Version 16 adds the village a request came from.
+constexpr int EncounterRecordSize = 1 + 4 + 3 * 4 + 3 * 4 + 4 + Encounter::MaxEnemies * 4 + 1 + 1 + 4 + 1 + 1;
+
+void loadEncounters(BytesIO &stream, std::vector<Encounter> &encounters, int version)
+{
+    int count = 0;
+    if (stream.size() - stream.m_offset < 4)
+        return;
+    stream.read(count);
+    const int recordSize = EncounterRecordSize + (version >= TownEncounterSaveVersion ? 1 + 2 * 4 : 0);
+    if (count < 0 || count > (stream.size() - stream.m_offset) / recordSize)
+        return;
+    for (int i = 0; i < count; ++i) {
+        Encounter encounter;
+        std::uint8_t kind = 0, flags = 0;
+        stream.read(kind);
+        stream.read(encounter.worldSeed);
+        stream.read(encounter.site);
+        stream.read(encounter.sackSite);
+        stream.read(encounter.roll);
+        stream.read(encounter.races);
+        stream.read(encounter.enemyCount);
+        stream.read(encounter.level);
+        stream.read(encounter.progressionLevel);
+        stream.read(encounter.defeated);
+        stream.read(flags);
+        if (version >= TownEncounterSaveVersion) {
+            std::uint8_t fromTown = 0;
+            stream.read(fromTown);
+            stream.read(encounter.town);
+            encounter.fromTown = fromTown != 0;
+        }
+        if (kind >= Encounter::KindCount || encounter.enemyCount > Encounter::MaxEnemies)
+            continue;
+        encounter.kind = static_cast<Encounter::Kind>(kind);
+        encounter.keyGranted = flags & 1;
+        encounter.opened = flags & 2;
+        encounter.accepted = true;
+        encounters.push_back(encounter);
+    }
+}
+
+void saveEncounters(BytesIO &stream, const std::vector<Encounter> &encounters)
+{
+    stream.write(int(encounters.size()));
+    for (const Encounter &encounter : encounters) {
+        stream.write(std::uint8_t(encounter.kind));
+        stream.write(encounter.worldSeed);
+        stream.write(encounter.site);
+        stream.write(encounter.sackSite);
+        stream.write(encounter.roll);
+        stream.write(encounter.races);
+        stream.write(encounter.enemyCount);
+        stream.write(encounter.level);
+        stream.write(encounter.progressionLevel);
+        stream.write(encounter.defeated);
+        stream.write(std::uint8_t((encounter.keyGranted ? 1 : 0) | (encounter.opened ? 2 : 0)));
+        stream.write(std::uint8_t(encounter.fromTown));
+        stream.write(encounter.town);
+    }
+}
+
 void saveTownQuests(BytesIO &stream, const std::vector<TownQuest> &quests)
 {
     stream.write(int(quests.size()));
@@ -57,7 +125,7 @@ void saveTownQuests(BytesIO &stream, const std::vector<TownQuest> &quests)
 
 Serializer::Serializer(BytesIO *stream)
     : m_stream(stream),
-      m_version(HairGradientSaveVersion),
+      m_version(RidingSkillSaveVersion),
       m_loadedVersion(0),
       m_stateVersion(44),
       m_unused14(0),
@@ -323,6 +391,21 @@ void Serializer::loadCreature(Creature *creature)
         m_stream->read(hair.blend);
         hair.enabled = enabled == 1 && hair.start <= 100 && hair.blend <= 100;
     }
+    if (m_loadedVersion >= EncounterSaveVersion)
+        loadEncounters(*m_stream, creature->m_playerData->encounters, m_loadedVersion);
+    if (m_loadedVersion >= TravelSkillSaveVersion && m_stream->size() - m_stream->m_offset >= 8) {
+        float swimming = 0.0f, climbing = 0.0f;
+        m_stream->read(swimming);
+        m_stream->read(climbing);
+        // Hostile or damaged values start over.
+        creature->m_playerData->swimmingSeconds = std::isfinite(swimming) ? std::max(0.0f, swimming) : 0.0f;
+        creature->m_playerData->climbingSeconds = std::isfinite(climbing) ? std::max(0.0f, climbing) : 0.0f;
+    }
+    if (m_loadedVersion >= RidingSkillSaveVersion && m_stream->size() - m_stream->m_offset >= 4) {
+        float riding = 0.0f;
+        m_stream->read(riding);
+        creature->m_playerData->ridingSeconds = std::isfinite(riding) ? std::max(0.0f, riding) : 0.0f;
+    }
     if (creature->m_pyroProgression)
         creature->m_entityData.xp = std::clamp(creature->m_entityData.xp, 0,
                                                progression::xpToNext(creature->m_entityData.progressionLevel) - 1);
@@ -551,6 +634,10 @@ void Serializer::saveCreature(Creature *creature)
     m_stream->write(hair.tips);
     m_stream->write(hair.start);
     m_stream->write(hair.blend);
+    saveEncounters(*m_stream, creature->m_playerData->encounters);
+    m_stream->write(creature->m_playerData->swimmingSeconds);
+    m_stream->write(creature->m_playerData->climbingSeconds);
+    m_stream->write(creature->m_playerData->ridingSeconds);
 }
 
 // Writes the format version (m_stateVersion), the day and the time, the two id sets and, for every zone record, its

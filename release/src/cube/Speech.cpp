@@ -22,6 +22,7 @@
 #include "cube/WorldIds.h"
 #include "cube/ZoneIds.h"
 #include "cube/SpeechIds.h"
+#include "GameDataStream.h"
 
 namespace cube {
 
@@ -891,7 +892,8 @@ Speech::Speech()
     m_specializationTypeIdMap[std::make_pair(ClassRogue, 1)] = L"SpecializationNinja";
 
     pugi::xml_document document;
-    if (!document.load_file("dict_en.xml")) {
+    GameDataStream dictionary("dict_en.xml", std::ios::binary);
+    if (!dictionary || !document.load(dictionary)) {
         return;
     }
     pugi::xml_node root = document.first_child();

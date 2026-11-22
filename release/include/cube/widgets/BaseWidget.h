@@ -13,6 +13,7 @@ namespace plasma {
 class Engine;
 class Node;
 class ScalableFont;
+class Texture;
 }
 
 namespace cube {
@@ -38,6 +39,10 @@ public:
     // Draws the phrases of each dialog from (x, y), wrapping at width, each phrase in its colour; returns (x, the y
     // after the last line).
     plasma::Vector<2, float> renderTextLines(const std::vector<Dialog> &dialogs, float x, float y, float width);
+    // Draws a texture over (x, y, width, height) plus the node's pivot, placed and scaled as renderText places text.
+    void renderImage(plasma::Texture *texture, float x, float y, float width, float height, float alpha = 1.0f);
+    // Fills (x, y, width, height) plus the node's pivot with a colour, placed as renderImage places images.
+    void renderRectangle(float x, float y, float width, float height, const plasma::Vector<4, float> &color);
     // renderText with each character on a moving wave (the engine's caret clock).
     plasma::Vector<2, float> renderWavyText(const std::wstring &text, float x, float y);
 

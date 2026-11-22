@@ -500,6 +500,8 @@ float Item::power(Creature *creature, int spirits) const
 
 int Item::price() const
 {
+    if (travelGearAnywhere())
+        return TravelGearPrice;
     float price = 0.2f;
     switch (category) {
     case ItemCategoryWeapon:

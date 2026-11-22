@@ -59,6 +59,10 @@ public:
 
     using SurfaceFactory = std::function<VkResult(VkInstance, VkSurfaceKHR *)>;
     void initialize(const char *surfaceExtension, const SurfaceFactory &createSurface, std::ostream &startupLog);
+    // Android destroys the window whenever the app leaves the screen. The device and everything created on it stay;
+    // beginFrame returns an empty extent until replaceSurface supplies the next window.
+    void releaseSurface();
+    void replaceSurface(const SurfaceFactory &createSurface);
     VkExtent2D beginFrame(VkExtent2D clientSize, bool vsync, unsigned requestedSamples, bool temporalAA, bool spatialAA,
                           std::array<float, 4> clearColor = {1, 1, 1, 1});
     bool temporalEnabled() const { return m_temporalAA; }

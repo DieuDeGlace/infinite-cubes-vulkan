@@ -50,6 +50,8 @@ Missions::Missions(World *world, const plasma::Vector<2, int> &region)
       m_village(NoCoordinate, NoCoordinate),
       m_hasDemonPortal(false)
 {
+    // The missions plan the original places, whatever the world turns into dungeons.
+    World::NativePlaces nativePlaces;
     // Every draw below hashes the seed and advances it.
     int seed = random(region[0] + 4642754, region[1]);
     int biome = world->landBiome(region[0], region[1]);
@@ -434,6 +436,18 @@ Missions::Missions(World *world, const plasma::Vector<2, int> &region)
                 m_partners[std::array<int, 2>(partner)] = std::array<int, 2> {place[1], place[2]};
                 m_kinds[std::array<int, 2>(partner)] = MissionKindExchangePartner;
                 m_values[std::array<int, 2>(partner)] = m_values[std::array<int, 2> {place[1], place[2]}];
+            }
+        }
+    }
+
+    // A world that turns the travel sites into dungeons gives no hang glider, boat, climbing spikes or reins there.
+    if (world->m_travelDungeons) {
+        for (auto it = m_kinds.begin(); it != m_kinds.end();) {
+            if (it->second >= MissionKindHangGliderPlacement && it->second <= MissionKindReinsPlacement) {
+                m_travelSites.push_back(it->first);
+                it = m_kinds.erase(it);
+            } else {
+                ++it;
             }
         }
     }

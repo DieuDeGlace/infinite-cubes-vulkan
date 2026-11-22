@@ -183,6 +183,11 @@ void writeDialogs(std::vector<Dialog> &dialogs, const std::wstring &text, const 
     }
 }
 
+bool isTownVillager(World &world, const Creature &creature)
+{
+    return canOffer(world, creature);
+}
+
 std::vector<long long> nearbyTownQuestGivers(World &world, const Creature &player, float range)
 {
     std::vector<long long> givers;
@@ -212,6 +217,12 @@ std::vector<long long> nearbyTownQuestGivers(World &world, const Creature &playe
             // No enemy group needs to be in sight yet: a request taken without one gets its targets later.
             givers.push_back(giver->m_id);
         }
+    }
+    for (const auto *traveler : world.m_creatures) {
+        const plasma::Vector<3, float> delta(traveler->m_entityData.position - player.m_entityData.position);
+        if (delta.squaredLength() <= range * range &&
+            (canReferEncounter(world, *traveler) || canReferVillageEncounter(world, *traveler)))
+            givers.push_back(traveler->m_id);
     }
     std::sort(givers.begin(), givers.end());
     return givers;
@@ -351,7 +362,7 @@ std::wstring Game::townQuestSummary()
     if (!player || !player->m_playerData || m_currentCharacterSlot < 0)
         return {};
     const auto current = blockPosition(player->m_entityData.position);
-    std::wstring text;
+    std::wstring text = encounterSummary();
     for (const auto &quest : player->m_playerData->townQuests) {
         if (quest.worldSeed != m_world->m_seed || quest.rewarded)
             continue;

@@ -10,6 +10,7 @@
 #include <cstdint>
 #include <map>
 #include <memory>
+#include <mutex>
 #include <set>
 #include <string>
 #include <unordered_map>
@@ -19,6 +20,7 @@
 #include "cube/Block.h"
 #include "cube/BlockIds.h"
 #include "cube/Database.h"
+#include "cube/Encounter.h"
 #include "cube/Item.h"
 #include "cube/ServerUpdates.h"
 #include "cube/SpawnTable.h"
@@ -590,6 +592,13 @@ public:
     // Random pet-food item (category 21): half the time from m_petFoodByRace for key when available, otherwise from
     // m_petRaces. dropLoot supplies key 0.
     Item randomPetFood(int key);
+    struct StartCellSearch {
+        int zoneX;
+        int zoneY;
+    };
+
+    StartCellSearch beginStartCellSearch();
+    std::optional<plasma::Vector<2, int>> probeStartCell(StartCellSearch &search);
     plasma::Vector<2, int> randomStartCell();
     std::vector<std::string> talkScript(Creature *creature);
     // Empty hook.
@@ -626,7 +635,18 @@ public:
         float dy = (float)(Fixed(((long long)y - center[1]) << FixedFractionBits) + offset[1]);
         return dy * dy + dx * dx;
     }
+    // The place type of a cell. With m_travelDungeons, the cells where the region's missions put a hang glider, boat,
+    // climbing spikes or reins hold a dungeon instead (OverworldEvents' travel sites).
     int locationType(int x, int y, bool large);
+    int nativeLocationType(int x, int y, bool large);
+    // While one lives on a thread, locationType gives the native types: the missions plan the original places.
+    struct NativePlaces {
+        NativePlaces() { ++depth; }
+        ~NativePlaces() { --depth; }
+        NativePlaces(const NativePlaces &) = delete;
+        NativePlaces &operator=(const NativePlaces &) = delete;
+        static thread_local int depth;
+    };
     // The type of the place of a cell, large or not. It passes the two coordinates on to the overload below: the copy
     // reads each element once and keeps it across the isLargePlace call.
     int locationType(const plasma::Vector<2, int> &cell) { return locationType(cell[0], cell[1]); }
@@ -818,6 +838,8 @@ public:
     void enterZones();
     void leaveZones();
     void enterZoneMeshes();
+    // The same without waiting: false when another thread holds the world.
+    bool tryEnterZoneMeshes();
     void leaveZoneMeshes();
     void setStaticActive(StaticEntity *entity, bool active);
     void storeZone(Zone *zone);
@@ -831,6 +853,11 @@ public:
     const bool m_largerBiomes;
     const bool m_pyroProgression;
     const bool m_aquaticEnemies;
+    bool m_travelDungeons = false; // set before any zone is generated
+    int m_spawnDensity = 100;      // wild spawn groups, percent of the native one cell column in 128
+    // By seed and region: the cells of its travel sites (the missions' kinds 6..9), filled as places are classified.
+    std::mutex m_travelSitesMutex;
+    std::map<std::array<int, 3>, std::vector<std::array<int, 2>>> m_travelSites;
     AIManager m_aiManager;
 
     struct TravelParty {
@@ -846,6 +873,34 @@ public:
     };
     void updateTravelParties(float milliseconds);
     bool createTravelParty(const Creature &player);
+    // Overworld encounters (Encounter.h; World/Encounters.cpp). Session-wide, except the accepted ones the local
+    // player's character keeps (PlayerData::encounters). They run in the host's world, where creatures live and fight.
+    // The game's own world is that host's client even in single player: it holds a copy for drawing, the map and the
+    // HUD, which Game::updateEncounterQuests refreshes, and m_encountersLive says the copy is being kept.
+    std::vector<Encounter> m_encounters;
+    bool m_encountersLive = false;
+    // The player the encounters follow: the local character, or in a host's world the first player's creature.
+    Creature *encounterPlayer();
+    // The character's accepted, unfinished encounters join the session, once per world.
+    void importEncounters(const std::vector<Encounter> &saved);
+    std::uint32_t m_encounterSerial = 0;
+    float m_encounterElapsed = 0.0f;
+    float m_encounterPlanDelay = 0.0f;
+    bool m_encountersImported = false;
+    void updateEncounters(float milliseconds);
+    // Plans and stages an encounter of kind between nearest and farthest blocks from the player, or from around when
+    // given (a village's centre), outside villages.
+    Encounter *startEncounter(Encounter::Kind kind, const Creature &player, double nearest, double farthest,
+                              const std::array<int, 2> *around = nullptr);
+    // Starts the landmark group of a native place (its normalised cell), if open ground lies at or beside its centre.
+    Encounter *startLandmark(Encounter::Kind kind, const std::array<int, 2> &cell, const Creature &player);
+    void chooseEncounterEnemies(Encounter &encounter, const Creature &player);
+    std::set<std::array<int, 2>> m_landmarksDone;              // finished this session
+    std::map<std::array<int, 2>, bool> m_landmarkHoldsUtility; // the place keeps a glider, boat or other special item
+    Encounter *encounterOf(long long actorId, int *role = nullptr);
+    bool isEncounterActor(long long id) { return encounterOf(id) != nullptr; }
+    void stageEncounter(Encounter &encounter);
+    void unstageEncounter(Encounter &encounter);
     bool updateTravelParty(TravelParty &party, const std::vector<const Creature *> &players, float milliseconds);
     std::vector<TravelParty> m_travelParties;
     float m_travelPartyElapsed = 0.0f;

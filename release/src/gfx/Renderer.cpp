@@ -2000,8 +2000,15 @@ void Renderer::collectSprites(const plasma::Vector<3, int> &lookedAt, int flags)
         color = plasma::Vector<4, float>(1.0f, 1.0f, 1.0f, 1.0f);
         cube::Sprite *sign = nullptr;
         unsigned char classType = creature->m_entityData.classType;
-        const bool questGiver = classType == cube::ClassGuildReceptionist || classType == cube::Class_139 ||
-                                std::binary_search(m_townQuestGivers.begin(), m_townQuestGivers.end(), creature->m_id);
+        // Only villagers with a town request to offer or to settle: no other NPC hands out a request on Talk.
+        const bool questGiver = std::binary_search(m_townQuestGivers.begin(), m_townQuestGivers.end(), creature->m_id);
+        // An encounter's adventurer with a reward ready shows the orange "?" of a hand-in.
+        int encounterRole = -1;
+        const cube::Encounter *encounter = m_world->encounterOf(creature->m_id, &encounterRole);
+        // A village whose request is done owes its reward through the villager who asked.
+        const bool handIn = (encounter && encounter->hasAdventurer() && encounterRole == cube::Encounter::Npc &&
+                             encounter->enemiesDefeated() && !encounter->finished() && !encounter->fromTown) ||
+                            (questGiver && cube::owesEncounterReward(*m_world, *creature));
         if (classType >= cube::ClassItemVendor && classType <= cube::ClassArmorVendor)
             sign = m_world->m_spriteManager->sprite(cube::SpriteIconVendor);
         if (classType == cube::ClassAnalyzer)
@@ -2058,11 +2065,11 @@ void Renderer::collectSprites(const plasma::Vector<3, int> &lookedAt, int flags)
             model.scale(scale, scale, scale);
             model.translate((float)sign->sizeX() * -0.5f, (float)sign->sizeY() * -0.5f, (float)sign->sizeZ() * -0.5f);
             m_worldBatch.add(sign, model, color, 1.0f, 1.0f, 0.0f, 0.0f, 0.0f);
-        } else if (questGiver && creature->m_entityData.hp > 0.0f && !(flags & RenderFlagOnlyPlayer)) {
+        } else if ((questGiver || handIn) && creature->m_entityData.hp > 0.0f && !(flags & RenderFlagOnlyPlayer)) {
             const cube::Fixed height(creature->m_entityData.appearance.size[2] * 0.5f + 1.0f - creature->m_stepOffset);
             const plasma::Vector<3, float> anchor(creature->m_drawnPosition +
                                                   plasma::Vector<3, cube::Fixed>(m_drawOriginX, m_drawOriginY, height));
-            m_worldQuestMarkers.push_back({anchor, QuestIcon::Giver});
+            m_worldQuestMarkers.push_back({anchor, handIn ? QuestIcon::Location : QuestIcon::Giver});
         }
     }
 
@@ -3606,7 +3613,7 @@ inline void Renderer::renderMap(const plasma::Vector<3, cube::Fixed> &center, in
     // The strength of the highlight on the selected flight point, 0..1: eased towards 1 while one is selected, reset
     // when none is.
     static float highlight;
-    m_worldMap->enter();
+    const auto regions = m_worldMap->lockRegions();
     activateMode(RendererMode_OpaqueFront);
     m_mapQuestMarkers.clear();
     m_worldMap->render(m_mapBatch, m_mapQuestMarkers, center, (int)((float)m_width * cursor[0]),
@@ -3646,7 +3653,6 @@ inline void Renderer::renderMap(const plasma::Vector<3, cube::Fixed> &center, in
     renderTranslucentSprites(m_mapBatch, 0);
     drawQuestMarkers(m_mapQuestMarkers, m_worldMap->m_viewMatrix, m_worldMap->m_projectionMatrix, true);
     setHighlight(plasma::Vector<4, float>(0.0f, 0.0f, 0.0f, 0.0f));
-    m_worldMap->leave();
 }
 
 void Renderer::renderParticles(std::list<cube::Particle> &particles)

@@ -120,6 +120,7 @@ void MapOverlayWidget::draw()
     // The 16-block cells that hold a mission marker.
     std::set<std::array<int, 2>> missionCells;
 
+    auto regions = m_game->m_worldMap->lockRegions();
     for (int regionX = minX; regionX <= maxX; regionX++) {
         for (int regionY = minY; regionY <= maxY; regionY++) {
             WorldMapRegion *region = m_game->m_worldMap->region(regionX, regionY, m_game->m_mapZoom);
@@ -494,6 +495,8 @@ void MapOverlayWidget::draw()
             }
         }
     }
+
+    regions.unlock();
 
     // The creatures the map tracks.
     for (std::pair<const long long, plasma::Vector<3, Fixed>> &entry : m_game->m_worldMap->m_creaturePositions) {

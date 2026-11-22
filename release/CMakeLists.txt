@@ -2,10 +2,15 @@ cmake_minimum_required(VERSION 3.20)
 project(InfiniteCubesRelease LANGUAGES C CXX)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
+find_package(Python3 REQUIRED COMPONENTS Interpreter)
+if(ANDROID)
+  include(cmake/Android.cmake)
+  return()
+endif()
+
 if(NOT WIN32 OR NOT CMAKE_SIZEOF_VOID_P EQUAL 8)
   message(FATAL_ERROR "Use a Windows x64 compiler (see README.md)")
 endif()
-find_package(Python3 REQUIRED COMPONENTS Interpreter)
 execute_process(COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/cmake/ExpandSQLite.py"
   "${CMAKE_CURRENT_SOURCE_DIR}/thirdparty/sqlite/sqlite3.c.xz" "${CMAKE_CURRENT_BINARY_DIR}/sqlite3.c"
   COMMAND_ERROR_IS_FATAL ANY)

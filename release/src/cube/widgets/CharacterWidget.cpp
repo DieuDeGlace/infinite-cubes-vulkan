@@ -10,7 +10,9 @@
 #include "plasma/Engine.h"
 #include "plasma/Node.h"
 #include "cube/CreatureIds.h"
+#include "cube/SkillIcons.h"
 #include "plasma/EditFilter.h"
+#include "plasma/Texture.h"
 
 namespace cube {
 
@@ -19,6 +21,12 @@ CharacterWidget::CharacterWidget(Game *game, plasma::Node *node)
       m_game(game)
 {
     setFont(L"resource1.dat");
+    plasma::TextureFormat format;
+    format.minFilter = format.maxFilter = plasma::TEXTURE_FILTER_NEAREST; // pixel art
+    format.horizontalWrap = format.verticalWrap = plasma::TEXTURE_WRAP_NONE;
+    m_climbingIcon = m_engine->createTexture(SkillIconSize, SkillIconSize, ClimbingIconPixels, format);
+    m_swimmingIcon = m_engine->createTexture(SkillIconSize, SkillIconSize, SwimmingIconPixels, format);
+    m_ridingIcon = m_engine->createTexture(SkillIconSize, SkillIconSize, RidingIconPixels, format);
 }
 
 void CharacterWidget::draw()
@@ -249,7 +257,23 @@ void CharacterWidget::draw()
             break;
         }
         setTextColor(rowColor);
-        float nameEnd = renderText(text.str(), 0.0f, (float)y)[0];
+        // Climbing, swimming and riding show their icon and level ahead of the name.
+        float nameX = 0.0f;
+        const Creature *player = m_game->m_world->m_localCreature;
+        plasma::Texture *icon = skill == ArtifactEffect_ClimbingSpeed   ? m_climbingIcon
+                                : skill == ArtifactEffect_SwimmingSpeed ? m_swimmingIcon
+                                : skill == ArtifactEffect_RidingSpeed   ? m_ridingIcon
+                                                                        : nullptr;
+        if (icon) {
+            // renderText places its baseline at y: the icon spans the text's height.
+            renderImage(icon, 0.0f, (float)y - 14.0f, 16.0f, 16.0f);
+            nameX = 20.0f;
+            text << L" Lv "
+                 << (skill == ArtifactEffect_ClimbingSpeed   ? player->climbingLevel()
+                     : skill == ArtifactEffect_SwimmingSpeed ? player->swimmingLevel()
+                                                             : player->ridingLevel());
+        }
+        float nameEnd = renderText(text.str(), nameX, (float)y)[0];
         if (artifactLevel) {
             setTextColor(plasma::Vector<4, float>(0.5f, 1.0f, 0.5f, 1.0f));
             text.str(L"");
@@ -263,19 +287,19 @@ void CharacterWidget::draw()
             text << round(m_game->m_world->m_localCreature->hangGlidingSpeed() * 100.0f) << L"%";
             break;
         case ArtifactEffect_ClimbingSpeed:
-            text << round(m_game->m_world->m_localCreature->climbingSpeed() * 100.0f) << L"%";
+            text << std::round(m_game->m_world->m_localCreature->climbingSpeed() * 10000.0f) / 100.0f << L"%";
             break;
         case ArtifactEffect_SailingSpeed:
             text << round(m_game->m_world->m_localCreature->sailingSpeed() * 100.0f) << L"%";
             break;
         case ArtifactEffect_SwimmingSpeed:
-            text << round(m_game->m_world->m_localCreature->swimmingSpeed() * 100.0f) << L"%";
+            text << std::round(m_game->m_world->m_localCreature->swimmingSpeed() * 10000.0f) / 100.0f << L"%";
             break;
         case ArtifactEffect_DivingStamina:
             text << roundTenth(m_game->m_world->m_localCreature->divingSkill() * 100.0f) << L" stam/s";
             break;
         case ArtifactEffect_RidingSpeed:
-            text << round(m_game->m_world->m_localCreature->ridingSpeed() * 100.0f) << L"%";
+            text << std::round(m_game->m_world->m_localCreature->ridingSpeed() * 10000.0f) / 100.0f << L"%";
             break;
         case ArtifactEffect_LampRadius:
             text << roundTenth(m_game->m_world->m_localCreature->lampDiameter() * 0.5) << L" m";

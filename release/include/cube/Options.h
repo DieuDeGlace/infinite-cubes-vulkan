@@ -2,12 +2,14 @@
 // before applying them to Game.
 #pragma once
 
+#include <iosfwd>
+
 namespace cube {
 
 struct Options {
     Options();
     // Reads options.cfg when present, using lines of "name value" with option member names as keys.
-    void load();
+    bool load();
     // Writes "options.cfg".
     void save();
 
@@ -37,12 +39,18 @@ struct Options {
     int largerBiomes;        // Read at startup. Selects 1.5x biome spacing.
     int pyroProgression;
     int aquaticEnemies;
-    int alphaLighting; // Selects the lighting used when building terrain meshes.
-    int sunShadows;    // Directional shadows from the world geometry.
-    int rsmGI;         // One bounce of sunlight from nearby surfaces.
-    int movingLeaves;  // Tree leaves sway in the wind.
-    int temporalAA;    // Scene TAA before the HUD.
-    int spatialAA;     // Scene SMAA Ultra.
+    int spawnDensity;   // Read at startup. Wild enemy groups, percent of native (50..400).
+    int travelDungeons; // Read at startup. Glider, boat, climbing-spike and reins sites become dungeons.
+    int alphaLighting;  // Selects the lighting used when building terrain meshes.
+    int sunShadows;     // Directional shadows from the world geometry.
+    int rsmGI;          // One bounce of sunlight from nearby surfaces.
+    int movingLeaves;   // Tree leaves sway in the wind.
+    int temporalAA;     // Scene TAA before the HUD.
+    int spatialAA;      // Scene SMAA Ultra.
+
+private:
+    void read(std::istream &file);
+    void write(std::ostream &file) const;
 };
 
 }

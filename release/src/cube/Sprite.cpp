@@ -1,7 +1,11 @@
 #include <algorithm>
 // See cube/Sprite.h.
-#include <fstream>
+#include "GameDataStream.h"
+#include <cstdint>
+#include <cstring>
+#include <limits>
 #include <math.h>
+#include <stdexcept>
 #include "cube/BytesIO.h"
 #include "cube/Database.h"
 #include "cube/Noise.h"
@@ -63,6 +67,10 @@ Sprite::~Sprite()
 
 bool Sprite::bind()
 {
+    if (m_meshDirty) {
+        updateMesh(0);
+        finalize();
+    }
     if (!m_vertexBuffer || !m_indexBuffer)
         return false;
     return m_vertexBuffer->bind() && m_indexBuffer->bind();
@@ -70,7 +78,7 @@ bool Sprite::bind()
 
 void Sprite::draw()
 {
-    if (m_vertexBuffer && m_indexBuffer && m_vertexBuffer->bind() && m_indexBuffer->bind()) {
+    if (bind()) {
         m_drawnFrame = s_frame;
         m_graphics->drawIndexed(m_vertexCount, m_triangleCount);
     }
@@ -116,18 +124,50 @@ void Sprite::load(const std::string &path, Database *database, bool showMarkers,
         data.read(&voxels[0], (int)voxels.size() * 3);
         setVoxels(sizeX, sizeY, sizeZ, &voxels[0], showMarkers, deferMesh);
     } else {
-        std::ifstream file(path, std::ios::binary);
+#ifdef __ANDROID__
+        // Read whole, so the model can come from the packed copy of a selected folder (android::openGameDataPack).
+        const std::vector<unsigned char> data = android::readGameData(path);
+        if (data.empty())
+            return;
+        int dimensions[3];
+        if (data.size() < sizeof(dimensions))
+            throw std::runtime_error("Cannot read sprite dimensions in " + path);
+        std::memcpy(dimensions, data.data(), sizeof(dimensions));
+        const auto [sizeX, sizeY, sizeZ] = dimensions;
+        const auto bytes = static_cast<int64_t>(data.size() - sizeof(dimensions));
+        const auto plane = static_cast<int64_t>(sizeX) * sizeY;
+        if (sizeX <= 0 || sizeY <= 0 || sizeZ <= 0 || plane > std::numeric_limits<int>::max() / sizeZ ||
+            plane > bytes / 3 / sizeZ)
+            throw std::runtime_error("Invalid or incomplete sprite " + path);
+
+        std::vector<plasma::Vector<3, unsigned char>> voxels(static_cast<size_t>(plane * sizeZ));
+        std::memcpy(voxels.data(), data.data() + sizeof(dimensions), voxels.size() * 3);
+        // Load voxels for world generation; build each GPU mesh when the renderer needs it.
+        setVoxels(sizeX, sizeY, sizeZ, voxels.data(), showMarkers, true);
+        m_meshDirty = !deferMesh;
+#else
+        GameDataStream file(path, std::ios::binary);
         if (!file.good())
             return;
-        int sizeX;
-        int sizeY;
-        int sizeZ;
-        file.read((char *)&sizeX, 4);
-        file.read((char *)&sizeY, 4);
-        file.read((char *)&sizeZ, 4);
-        std::vector<plasma::Vector<3, unsigned char>> voxels(sizeX * sizeY * sizeZ);
-        file.read((char *)&voxels[0], voxels.size() * 3);
-        setVoxels(sizeX, sizeY, sizeZ, &voxels[0], showMarkers, deferMesh);
+        int dimensions[3];
+        if (!file.read(reinterpret_cast<char *>(dimensions), sizeof(dimensions)))
+            throw std::runtime_error("Cannot read sprite dimensions in " + path);
+        const auto [sizeX, sizeY, sizeZ] = dimensions;
+        const std::streampos start = file.tellg();
+        file.seekg(0, std::ios::end);
+        const std::streamoff bytes = file.tellg() - start;
+        file.seekg(start);
+
+        const auto plane = static_cast<int64_t>(sizeX) * sizeY;
+        if (sizeX <= 0 || sizeY <= 0 || sizeZ <= 0 || plane > std::numeric_limits<int>::max() / sizeZ ||
+            plane > bytes / 3 / sizeZ)
+            throw std::runtime_error("Invalid or incomplete sprite " + path);
+
+        std::vector<plasma::Vector<3, unsigned char>> voxels(static_cast<size_t>(plane * sizeZ));
+        if (!file.read(reinterpret_cast<char *>(voxels.data()), voxels.size() * 3))
+            throw std::runtime_error("Cannot read sprite voxels in " + path);
+        setVoxels(sizeX, sizeY, sizeZ, voxels.data(), showMarkers, deferMesh);
+#endif
     }
     finalize();
 }

@@ -12,7 +12,12 @@ FetchContent_Declare(vma
 set(VOLK_PULL_IN_VULKAN OFF)
 FetchContent_MakeAvailable(vulkan_headers volk vma)
 target_link_libraries(volk PUBLIC Vulkan::Headers)
-target_compile_definitions(volk PUBLIC VK_USE_PLATFORM_WIN32_KHR WIN32_LEAN_AND_MEAN NOMINMAX)
+if(ANDROID)
+  target_compile_definitions(volk PUBLIC VK_USE_PLATFORM_ANDROID_KHR)
+  set_target_properties(volk PROPERTIES POSITION_INDEPENDENT_CODE ON)
+else()
+  target_compile_definitions(volk PUBLIC VK_USE_PLATFORM_WIN32_KHR WIN32_LEAN_AND_MEAN NOMINMAX)
+endif()
 target_include_directories(cubeworld SYSTEM PRIVATE "${vma_SOURCE_DIR}/include")
 target_link_libraries(cubeworld PRIVATE volk::volk)
 

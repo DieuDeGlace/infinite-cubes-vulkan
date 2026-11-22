@@ -2,6 +2,10 @@
 #include "cube/Options.h"
 #include <fstream>
 #include <string>
+#ifdef __ANDROID__
+#include <sstream>
+#include "AndroidGameData.h"
+#endif
 
 namespace cube {
 
@@ -33,6 +37,8 @@ Options::Options()
     largerBiomes = 0;
     pyroProgression = 1;
     aquaticEnemies = 1;
+    travelDungeons = 1;
+    spawnDensity = 150;
     alphaLighting = 0;
     sunShadows = 0;
     rsmGI = 0;
@@ -41,9 +47,26 @@ Options::Options()
     spatialAA = 0;
 }
 
-void Options::load()
+bool Options::load()
 {
     std::ifstream file("options.cfg");
+    if (file.is_open())
+        read(file);
+#ifdef __ANDROID__
+    // A partial configuration in Documents can override individual app settings.
+    if (android::usingDocumentsOptions()) {
+        android::GameDataStream document("options.cfg");
+        if (document.is_open()) {
+            read(document);
+            return true;
+        }
+    }
+#endif
+    return file.is_open();
+}
+
+void Options::read(std::istream &file)
+{
     while (file.good()) {
         std::string key;
         file >> key;
@@ -128,6 +151,12 @@ void Options::load()
         if (key == "aquaticEnemies") {
             file >> aquaticEnemies;
         }
+        if (key == "spawnDensity") {
+            file >> spawnDensity;
+        }
+        if (key == "travelDungeons") {
+            file >> travelDungeons;
+        }
         if (key == "alphaLighting") {
             file >> alphaLighting;
         }
@@ -151,7 +180,25 @@ void Options::load()
 
 void Options::save()
 {
+#ifdef __ANDROID__
+    if (android::usingDocumentsOptions()) {
+        std::ostringstream contents;
+        write(contents);
+        const std::string text = contents.str();
+        {
+            std::ofstream file("options.cfg");
+            file << text;
+        }
+        android::writeDocumentsOptions(text);
+        return;
+    }
+#endif
     std::ofstream file("options.cfg");
+    write(file);
+}
+
+void Options::write(std::ostream &file) const
+{
     file << "fullscreen " << fullscreen << std::endl;
     file << "resolutionX " << resolutionX << std::endl;
     file << "resolutionY " << resolutionY << std::endl;
@@ -178,6 +225,8 @@ void Options::save()
     file << "largerBiomes " << largerBiomes << std::endl;
     file << "pyroProgression " << pyroProgression << std::endl;
     file << "aquaticEnemies " << aquaticEnemies << std::endl;
+    file << "travelDungeons " << travelDungeons << std::endl;
+    file << "spawnDensity " << spawnDensity << std::endl;
     file << "alphaLighting " << alphaLighting << std::endl;
     file << "sunShadows " << sunShadows << std::endl;
     file << "rsmGI " << rsmGI << std::endl;

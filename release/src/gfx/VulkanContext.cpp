@@ -403,6 +403,30 @@ void VulkanContext::waitIdle() const
         check(vkDeviceWaitIdle(m_device), "Wait for the Vulkan device");
 }
 
+// Android's compositor rotates the image to the display's orientation. It reports that as a suboptimal swapchain on
+// every frame, which is no reason to rebuild it.
+#ifdef __ANDROID__
+constexpr bool CompositorRotates = true;
+#else
+constexpr bool CompositorRotates = false;
+#endif
+
+void VulkanContext::releaseSurface()
+{
+    if (!m_surface)
+        return;
+    waitIdle();
+    destroySwapchain();
+    vkDestroySurfaceKHR(m_instance, m_surface, nullptr);
+    m_surface = VK_NULL_HANDLE;
+}
+
+void VulkanContext::replaceSurface(const SurfaceFactory &createSurface)
+{
+    releaseSurface();
+    check(createSurface(m_instance, &m_surface), "Create Vulkan window surface");
+}
+
 void VulkanContext::destroySwapchain()
 {
     m_targets.clear();
@@ -491,7 +515,7 @@ bool VulkanContext::recreateSwapchain(VkExtent2D clientSize, bool vsync, unsigne
     if (swapchainTransferSource)
         info.imageUsage |= VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
     info.imageSharingMode = VK_SHARING_MODE_EXCLUSIVE;
-    info.preTransform = capabilities.currentTransform;
+    info.preTransform = CompositorRotates ? VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR : capabilities.currentTransform;
     info.compositeAlpha = *compositeAlpha;
     info.presentMode = mode;
     info.clipped = VK_TRUE;
@@ -533,7 +557,7 @@ bool VulkanContext::recreateSwapchain(VkExtent2D clientSize, bool vsync, unsigne
 VkExtent2D VulkanContext::beginFrame(VkExtent2D clientSize, bool vsync, unsigned requestedSamples, bool temporalAA,
                                      bool spatialAA, std::array<float, 4> clearColor)
 {
-    if (!clientSize.width || !clientSize.height)
+    if (!m_surface || !clientSize.width || !clientSize.height)
         return {};
     if (temporalAA != m_temporalAA || spatialAA != m_spatialAA) {
         m_temporalAA = temporalAA;
@@ -557,7 +581,7 @@ VkExtent2D VulkanContext::beginFrame(VkExtent2D clientSize, bool vsync, unsigned
         return {};
     }
     if (acquire == VK_SUBOPTIMAL_KHR)
-        m_recreate = true;
+        m_recreate = !CompositorRotates;
     else
         check(acquire, "Acquire swapchain image");
 
@@ -631,6 +655,8 @@ bool VulkanContext::present()
     const VkResult result = vkQueuePresentKHR(m_queue, &present);
     m_frame = nullptr;
     m_frameIndex = (m_frameIndex + 1) % m_frames.size();
+    if (result == VK_SUBOPTIMAL_KHR && CompositorRotates)
+        return true;
     if (result == VK_ERROR_OUT_OF_DATE_KHR || result == VK_SUBOPTIMAL_KHR) {
         m_recreate = true;
         return result == VK_SUBOPTIMAL_KHR;

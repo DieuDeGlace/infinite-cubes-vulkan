@@ -128,7 +128,7 @@ public:
     int m_triangleCount;               // index count / 3 (updateMesh)
     plasma::Vector<3, int> m_size;     // voxels per axis
     int m_drawnFrame;                  // s_frame at the last draw
-    bool m_meshDirty;                  // false in the constructors; cleared at the end of updateMesh
+    bool m_meshDirty;                  // Android file meshes are built on the first bind.
     // Whether marker voxels are meshed (isEmpty treats them as empty when false); set by load.
     bool m_showMarkers;
     bool m_fullIntensity;

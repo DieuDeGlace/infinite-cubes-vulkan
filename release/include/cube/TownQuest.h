@@ -61,5 +61,12 @@ struct TownQuest {
 
 // The givers waiting for the player's return, and the villagers within range that have a request to offer. Sorted.
 std::vector<long long> nearbyTownQuestGivers(World &world, const Creature &player, float range);
+// A friendly traveler who can point the player to an overworld encounter now (Encounters.cpp).
+bool canReferEncounter(World &world, const Creature &creature);
+// A villager who can give or settle requests: in a village, not in a shop or beside its keeper (TownQuests.cpp).
+bool isTownVillager(World &world, const Creature &creature);
+// A villager who can send the player to a battle or rescue now, and one whose village owes a reward (Encounters.cpp).
+bool canReferVillageEncounter(World &world, const Creature &creature);
+bool owesEncounterReward(World &world, const Creature &creature);
 
 }

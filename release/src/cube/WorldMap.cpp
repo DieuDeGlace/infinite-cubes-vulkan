@@ -71,7 +71,6 @@ WorldMap::WorldMap(World *world, plasma::Engine *engine)
       m_frameCounter(0),
       m_regionRadius(0)
 {
-    InitializeCriticalSectionAndSpinCount(&m_regionsCriticalSection, 16);
     InitializeCriticalSectionAndSpinCount(&m_unusedLock, 16);
     m_levels.resize(MapZoomLevelCount);
 }
@@ -96,7 +95,6 @@ WorldMap::~WorldMap()
     for (std::pair<const long long, Creature *> &entry : m_creatures) {
         delete entry.second;
     }
-    DeleteCriticalSection(&m_regionsCriticalSection);
     DeleteCriticalSection(&m_unusedLock);
     for (WorldMapZoom &level : m_levels) {
         delete level.previewSprite;
@@ -104,9 +102,6 @@ WorldMap::~WorldMap()
         for (std::pair<const std::array<int, 2>, Sprite *> entry : level.unusedSprites) {
             delete entry.second;
         }
-    }
-    for (std::pair<const std::array<int, 3>, WorldMapRegion *> &entry : m_regions) {
-        delete entry.second;
     }
 }
 
@@ -117,53 +112,31 @@ WorldMapRegion::~WorldMapRegion()
 
 void WorldMap::cleanUp()
 {
-    std::list<std::map<std::array<int, 3>, WorldMapRegion *>::iterator> unused;
-    std::vector<std::map<std::array<int, 3>, WorldMapRegion *>::iterator> used;
-    std::map<std::array<int, 3>, WorldMapRegion *>::iterator it;
-    for (it = m_regions.begin(); it != m_regions.end(); ++it) {
-        if (it->second == nullptr) {
-            unused.push_back(it);
-        } else {
-            used.push_back(it);
-        }
-    }
-    std::sort(used.begin(), used.end(),
-              [](const std::map<std::array<int, 3>, WorldMapRegion *>::iterator &a,
-                 const std::map<std::array<int, 3>, WorldMapRegion *>::iterator &b) {
-                  return a->second->cacheTimes[0] > b->second->cacheTimes[0];
-              });
-    for (int i = MapRegionCacheCapacity; i < (int)used.size(); i++) {
-        Sleep(0);
-        it = used[i];
-        WorldMapRegion *region = it->second;
-        EnterCriticalSection(&m_regionsCriticalSection);
-        it->second = nullptr;
-        LeaveCriticalSection(&m_regionsCriticalSection);
-        delete region;
-        unused.push_back(it);
-    }
-    for (std::map<std::array<int, 3>, WorldMapRegion *>::iterator &entry : unused) {
-        EnterCriticalSection(&m_regionsCriticalSection);
-        m_regions.erase(entry);
-        LeaveCriticalSection(&m_regionsCriticalSection);
-        Sleep(0);
+    // Release the evicted meshes after unlocking the cache.
+    std::vector<std::unique_ptr<WorldMapRegion>> expired;
+    const auto lock = lockRegions();
+    if (m_regions.size() <= MapRegionCacheCapacity)
+        return;
+
+    std::vector<decltype(m_regions)::iterator> used;
+    used.reserve(m_regions.size());
+    for (auto it = m_regions.begin(); it != m_regions.end(); ++it)
+        used.push_back(it);
+    const auto firstExpired = used.begin() + MapRegionCacheCapacity;
+    std::nth_element(used.begin(), firstExpired, used.end(),
+                     [](auto a, auto b) { return a->second->cacheTimes[0] > b->second->cacheTimes[0]; });
+    expired.reserve(used.size() - MapRegionCacheCapacity);
+    for (auto it = firstExpired; it != used.end(); ++it) {
+        expired.push_back(std::move((*it)->second));
+        m_regions.erase(*it);
     }
 }
 
 void WorldMap::clear()
 {
-    std::map<std::array<int, 3>, WorldMapRegion *> regions = m_regions;
-    EnterCriticalSection(&m_regionsCriticalSection);
-    m_regions.clear();
-    LeaveCriticalSection(&m_regionsCriticalSection);
-    for (std::map<std::array<int, 3>, WorldMapRegion *>::iterator it = regions.begin(); it != regions.end(); ++it) {
-        delete it->second;
-    }
-}
-
-void WorldMap::enter()
-{
-    EnterCriticalSection(&m_regionsCriticalSection);
+    decltype(m_regions) previous;
+    const auto lock = lockRegions();
+    previous.swap(m_regions);
 }
 
 plasma::Vector<3, float> heightTint(const plasma::Vector<3, float> &color, int regionSize, int z, int lowest,
@@ -185,11 +158,6 @@ plasma::Vector<3, float> heightTint(const plasma::Vector<3, float> &color, int r
     float luminance = scaled[0] * 0.299f + scaled[1] * 0.587f + scaled[2] * 0.114f;
     result += (tint * luminance - result) * (fade * 0.8f);
     return result;
-}
-
-void WorldMap::leave()
-{
-    LeaveCriticalSection(&m_regionsCriticalSection);
 }
 
 void WorldMap::markCreature(Creature *creature)
@@ -292,7 +260,7 @@ void WorldMap::render(gfx::SpriteBatch &batch, std::vector<gfx::QuestMarker> &qu
     m_totalGenerationTime = 0;
     for (int i = firstX; i <= lastX; i++) {
         for (int j = firstY; j <= lastY; j++) {
-            WorldMapRegion *region = m_regions[std::array<int, 3> {{i, j, level}}];
+            WorldMapRegion *region = this->region(i, j, level);
             if (region == nullptr || region->sprite == nullptr) {
                 continue;
             }
@@ -400,7 +368,7 @@ void WorldMap::render(gfx::SpriteBatch &batch, std::vector<gfx::QuestMarker> &qu
         float pulse = (cosf(m_world->m_clock * MapMarkerPulseRate) + 1.0f) * 0.4f;
         for (int i = firstX; i <= lastX; i++) {
             for (int j = firstY; j <= lastY; j++) {
-                WorldMapRegion *region = m_regions[std::array<int, 3> {{i, j, level}}];
+                WorldMapRegion *region = this->region(i, j, level);
                 if (region == nullptr || region->sprite == nullptr) {
                     continue;
                 }
@@ -588,6 +556,23 @@ void WorldMap::render(gfx::SpriteBatch &batch, std::vector<gfx::QuestMarker> &qu
                 continue;
             questMarkers.push_back({{offset[0], offset[1], std::max(0.0f, offset[2]) + 4.0f}, gfx::QuestIcon::Giver});
         }
+        // Overworld encounters: an orange "?" where one waits to be found, a grey "?" on an accepted one.
+        for (const Encounter &encounter : m_world->m_encounters) {
+            if (encounter.finished() || encounter.worldSeed != m_world->m_seed)
+                continue;
+            // A village request whose site is done: the reward waits in the village.
+            const bool backToTown = encounter.fromTown && encounter.siteDone();
+            const plasma::Vector<3, Fixed> site(Fixed(backToTown ? encounter.town[0] : encounter.site[0]) + Fixed(0.5),
+                                                Fixed(backToTown ? encounter.town[1] : encounter.site[1]) + Fixed(0.5),
+                                                backToTown ? Fixed(m_world->m_localCreature->m_entityData.position[2])
+                                                           : Fixed(encounter.site[2]));
+            const plasma::Vector<3, float> offset = plasma::Vector<3, float>(site - center) / float(scale);
+            const float range = float(g_mapRegionSize * m_regionRadius);
+            if (std::abs(offset[0]) >= range || std::abs(offset[1]) >= range)
+                continue;
+            questMarkers.push_back({{offset[0], offset[1], std::max(0.0f, offset[2]) + 4.0f},
+                                    encounter.accepted ? gfx::QuestIcon::Objective : gfx::QuestIcon::Location});
+        }
         for (const auto &quest : quests) {
             // A request without targets yet has no place to mark.
             if (quest.rewarded || quest.worldSeed != m_world->m_seed || quest.pending())
@@ -749,11 +734,14 @@ bool WorldMap::update(const plasma::Vector<3, Fixed> &position, int level)
     int x = floorDivide((int)position[0], regionSize);
     int y = floorDivide((int)position[1], regionSize);
     std::vector<plasma::Vector<3, int>> missing;
-    for (int i = x - g_mapRegionRadius; i < x + g_mapRegionRadius; i++) {
-        for (int j = y - g_mapRegionRadius; j < y + g_mapRegionRadius; j++) {
-            if (m_regions[std::array<int, 3> {{i, j, level}}] == nullptr) {
-                int squaredDistance = (i - x) * (i - x) + (j - y) * (j - y);
-                missing.push_back(plasma::Vector<3, int>(i, j, squaredDistance));
+    {
+        const auto lock = lockRegions();
+        for (int i = x - g_mapRegionRadius; i < x + g_mapRegionRadius; i++) {
+            for (int j = y - g_mapRegionRadius; j < y + g_mapRegionRadius; j++) {
+                if (!region(i, j, level)) {
+                    int squaredDistance = (i - x) * (i - x) + (j - y) * (j - y);
+                    missing.push_back(plasma::Vector<3, int>(i, j, squaredDistance));
+                }
             }
         }
     }
@@ -776,7 +764,7 @@ bool WorldMap::update(const plasma::Vector<3, Fixed> &position, int level)
         missing.begin(), missing.end(), [this, &regionSize, &scale, &step, &level](const plasma::Vector<3, int> &cell) {
             int mapRegionX = cell[0];
             int mapRegionY = cell[1];
-            WorldMapRegion *region = new WorldMapRegion;
+            auto region = std::make_unique<WorldMapRegion>();
             region->cacheTimes[1] = timeGetTime();
             region->sprite = m_world->m_spriteManager->createSprite(true);
             // First pass: the terrain height of every column of the region and its border, and the lowest and highest
@@ -1985,9 +1973,8 @@ bool WorldMap::update(const plasma::Vector<3, Fixed> &position, int level)
             }
             region->generationTime = timeGetTime() - region->cacheTimes[1];
             // The finished region is published under the regions lock.
-            EnterCriticalSection(&m_regionsCriticalSection);
-            m_regions[std::array<int, 3> {{mapRegionX, mapRegionY, level}}] = region;
-            LeaveCriticalSection(&m_regionsCriticalSection);
+            const auto lock = lockRegions();
+            m_regions.try_emplace({mapRegionX, mapRegionY, level}, std::move(region));
         });
     return true;
 }

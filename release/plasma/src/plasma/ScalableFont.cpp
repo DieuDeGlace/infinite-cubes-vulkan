@@ -2,12 +2,13 @@
 // Locking methods are empty.
 #include "plasma/ScalableFont.h"
 #include "plasma/Engine.h"
+#include "plasma/FilePath.h"
 #include "plasma/Font.h"
 #include "plasma/Texture.h"
 #include "plasma/Node.h"
 #include "plasma/Shape.h"
 #include "plasma/Transformation.h"
-#include <fstream>
+#include "GameDataStream.h"
 #include <algorithm>
 #include <cctype>
 #include <cmath>
@@ -727,8 +728,8 @@ bool ScalableFont::load(FT_Library library, const std::wstring &path,
 bool ScalableFont::loadPlasma(const std::wstring &path)
 {
     lock();
-    std::ifstream file;
-    file.open(path.c_str(), std::ios::in | std::ios::binary);
+    GameDataStream file;
+    file.open(FilePath(path), std::ios::in | std::ios::binary);
     if (!file.is_open()) {
         unlock();
         return false;
@@ -786,6 +787,14 @@ bool ScalableFont::loadPlasma(const std::wstring &path)
 
 bool ScalableFont::loadTrueType(FT_Library library, const std::wstring &path)
 {
+#ifdef __ANDROID__
+    const auto asset = FilePath(path);
+    if (android::usingGameDataFolder() && asset.is_relative()) {
+        m_gameFontBytes = android::readGameData(asset);
+        return !m_gameFontBytes.empty() &&
+               loadTrueTypeFromMemory(library, path, m_gameFontBytes.data(), m_gameFontBytes.size());
+    }
+#endif
     lock();
     int error = FT_New_Face(library, NarrowString(path).c_str(), 0, &m_face);
     if (error) {

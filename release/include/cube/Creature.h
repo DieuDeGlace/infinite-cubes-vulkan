@@ -14,6 +14,7 @@
 #include "cube/Fixed.h"
 #include "cube/IntTriple.h"
 #include "cube/Item.h"
+#include "cube/Encounter.h"
 #include "cube/TownQuest.h"
 #include <optional>
 #include "cube/WorldMap.h"
@@ -246,6 +247,11 @@ struct PlayerData : CharacterStyle {
     std::map<unsigned, std::set<std::array<int, 2>>> loreByRealm;
     std::map<long long, std::list<Item>> purchasesByShop;
     std::vector<TownQuest> townQuests;
+    std::vector<Encounter> encounters; // the accepted, unfinished overworld encounters
+    // Seconds spent swimming and climbing: they raise the swimming and climbing levels (Creature::travelSkillLevel).
+    float swimmingSeconds = 0.0f;
+    float climbingSeconds = 0.0f;
+    float ridingSeconds = 0.0f; // riding counts in full, walking with a pet out at half
     Item usableSpecialItem;
     Item contextItem;         // the renderer calls the Item method on it
     int contextItemCount = 0; // Initially zero; copied with the player data.
@@ -563,6 +569,25 @@ public:
     // The movement skills: each maps a skill level (the artifact skill for the player, ten times the level for others)
     // onto a speed.
     float climbingSpeed();
+    // Swimming and climbing levels, 0..TravelSkillCap, earned by time spent at them (level n after 6 n^2 seconds);
+    // each adds TravelSkillBonus to that speed. 0 for creatures without player data.
+    static constexpr int TravelSkillCap = 100;
+    static constexpr float TravelSkillBonus = 0.0005f;
+    static int travelSkillLevel(float seconds);
+    int swimmingLevel() const;
+    int climbingLevel() const;
+    int ridingLevel() const;
+    // The skill a travel item needs at Item::TravelGearLevel (the glider climbing, the boat swimming, the reins riding),
+    // its name, and whether the creature has it: true for the climbing spikes and other items.
+    enum TravelSkill {
+        TravelSkillNone,
+        TravelSkillClimbing,
+        TravelSkillSwimming,
+        TravelSkillRiding
+    };
+    static int travelGearSkill(int specialItem);
+    static const wchar_t *travelSkillName(int skill);
+    bool meetsTravelGearSkill(int specialItem) const;
     // The skill's cooldown time in milliseconds (0 without one; skills 50 and 108: 1800 instead of 16000 with a buff
     // of type 13).
     int cooldown(int skill);
@@ -717,6 +742,8 @@ public:
     int displayLevel() const { return m_pyroProgression ? m_entityData.progressionLevel : m_entityData.level; }
     bool awardExperience(int xp);
     bool m_pyroProgression = false;
+    float m_hpScale = 1.0f;     // an encounter guardian's or protected actor's maximum HP multiplier
+    float m_attackScale = 1.0f; // an encounter enemy's attack and spell power multiplier
     // Zeroes m_artifactSkills, sets the level to 1, then for every artifact in inventory tab 5 adds one level and one
     // point to the skill Item::artifactType selects.
     void updateLevelAndSkills();

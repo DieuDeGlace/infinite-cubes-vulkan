@@ -143,6 +143,8 @@ public:
 
     World *m_world;
     plasma::Vector<2, int> m_region;
+    // The travel sites (kinds 6..9) taken out of m_kinds when the world turns them into dungeons.
+    std::vector<std::array<int, 2>> m_travelSites;
     std::map<std::array<int, 2>, unsigned int> m_kinds;   // by cell: what the place is in the region's missions (1..23)
     std::map<std::array<int, 2>, Item> m_artifacts;       // by cell (generateArtifact)
     std::vector<plasma::Vector<2, int>> m_places;         // the cells whose kind is not one of 13..15, 17, 21..23

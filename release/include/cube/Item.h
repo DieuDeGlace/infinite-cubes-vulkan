@@ -88,6 +88,19 @@ struct Item {
                modifier % ((rarity + 1) * 10) == 0;
     }
 
+    // With the travel sites turned into dungeons (World::m_travelDungeons), the hang glider, boat, climbing spikes and
+    // reins are sold in general stores and work in every region; the glider, boat and reins need climbing, swimming or
+    // riding level TravelGearLevel (Creature::travelGearSkill).
+    static inline bool s_travelGearAnywhere = false;
+    static constexpr int TravelGearLevel = 5;
+    static constexpr int TravelGearPrice = 1000; // ten silver
+    bool isTravelGear() const
+    {
+        return category == ItemCategorySpecial && (id == SpecialItemHangGlider || id == SpecialItemBoat ||
+                                                   id == SpecialItemClimbingSpikes || id == SpecialItemReins);
+    }
+    bool travelGearAnywhere() const { return s_travelGearAnywhere && isTravelGear(); }
+
     // Whether the item belongs to a region: categories 2..9, 15, 22, 24, 26 and 30. Game assigns such items the region
     // of their source item or creature.
     bool hasRegion() const

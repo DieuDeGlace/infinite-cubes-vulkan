@@ -2,6 +2,7 @@
 #include <math.h>
 #include <sstream>
 #include "cube/widgets/BaseWidget.h"
+#include "plasma/Texture.h"
 #include "cube/World.h"
 #include "plasma/Engine.h"
 #include "plasma/FontEngine.h"
@@ -102,6 +103,52 @@ void BaseWidget::setTextStrokeRadius(float radius)
 void BaseWidget::setTextWrapWidth(float width)
 {
     m_textWrapWidth = width;
+}
+
+void BaseWidget::renderImage(plasma::Texture *texture, float x, float y, float width, float height, float alpha)
+{
+    if (!texture)
+        return;
+    m_engine->beginTextDrawing(m_node);
+    plasma::Matrix<float> previous;
+    m_engine->getModelViewMatrix(previous);
+    const float scale = previous.m_elements[0];
+    const plasma::Vector<2, float> position =
+        (m_node->transformation()->m_pivot.value() + plasma::Vector<2, float>(x, y)) * scale;
+    // In window pixels from the node's whole-pixel origin, as the font draws its glyphs.
+    plasma::Matrix<float> matrix;
+    matrix.identity();
+    matrix.translate((float)(int)(previous.m_elements[12] + 0.5f), (float)(int)(previous.m_elements[13] + 0.5f));
+    m_engine->loadMatrix(matrix);
+    m_engine->matrixLoaded();
+    m_engine->enableTexture2D();
+    texture->bind(1);
+    m_engine->drawTexturedRectangle(plasma::Vector<2, float>((float)(int)position[0], (float)(int)position[1]),
+                                    plasma::Vector<2, float>(width * scale, height * scale),
+                                    plasma::Vector<2, float>(0.0f, 0.0f), plasma::Vector<2, float>(1.0f, 1.0f),
+                                    plasma::Vector<4, float>(1.0f, 1.0f, 1.0f, alpha));
+    m_engine->disableTexture2D();
+    m_engine->loadMatrix(previous);
+    m_engine->endTextDrawing(m_node);
+}
+
+void BaseWidget::renderRectangle(float x, float y, float width, float height, const plasma::Vector<4, float> &color)
+{
+    m_engine->beginTextDrawing(m_node);
+    plasma::Matrix<float> previous;
+    m_engine->getModelViewMatrix(previous);
+    const float scale = previous.m_elements[0];
+    const plasma::Vector<2, float> position =
+        (m_node->transformation()->m_pivot.value() + plasma::Vector<2, float>(x, y)) * scale;
+    plasma::Matrix<float> matrix;
+    matrix.identity();
+    matrix.translate((float)(int)(previous.m_elements[12] + 0.5f), (float)(int)(previous.m_elements[13] + 0.5f));
+    m_engine->loadMatrix(matrix);
+    m_engine->matrixLoaded();
+    m_engine->fillRectangle(plasma::Vector<2, float>((float)(int)position[0], (float)(int)position[1]),
+                            plasma::Vector<2, float>(width * scale, height * scale), color);
+    m_engine->loadMatrix(previous);
+    m_engine->endTextDrawing(m_node);
 }
 
 plasma::Vector<2, float> BaseWidget::renderText(const std::wstring &text, float x, float y)

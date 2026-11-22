@@ -27,11 +27,12 @@
 #include "plasma/RenderSurface.h"
 #include "plasma/PLXStreamReader.h"
 #include "plasma/Exception.h"
+#include "plasma/FilePath.h"
 #include <ft2build.h>
 #include FT_FREETYPE_H
 #include <algorithm>
 #include <cctype>
-#include <fstream>
+#include "GameDataStream.h"
 #include <iostream>
 #include <sstream>
 #include "plasma/EditFilter.h"
@@ -686,12 +687,12 @@ PlasmaFont *Engine::loadOutlineFont(const std::wstring &path, float size, const 
             return copy;
         }
     }
-    std::ifstream stream;
-    stream.open(path.c_str(), std::ios::in | std::ios::binary);
+    GameDataStream stream;
+    stream.open(FilePath(path), std::ios::in | std::ios::binary);
     std::wstring directory;
     if (!stream.is_open()) {
         for (std::list<std::wstring>::iterator it = m_fontPaths.begin(); it != m_fontPaths.end(); ++it) {
-            stream.open((*it + L"/" + basename).c_str(), std::ios::in | std::ios::binary);
+            stream.open(FilePath(*it + L"/" + basename), std::ios::in | std::ios::binary);
             if (stream.is_open()) {
                 directory = *it;
                 break;
@@ -710,7 +711,20 @@ PlasmaFont *Engine::loadOutlineFont(const std::wstring &path, float size, const 
     else
         directory += L"/" + basename;
     FT_Face face;
-    if (FT_New_Face(m_freeType, NarrowString(directory).c_str(), 0, &face))
+    FT_Error fontError;
+#ifdef __ANDROID__
+    std::vector<unsigned char> fontBytes;
+    const auto fontPath = FilePath(directory);
+    if (android::usingGameDataFolder() && fontPath.is_relative()) {
+        fontBytes = android::readGameData(fontPath);
+        fontError = fontBytes.empty() ? FT_Err_Cannot_Open_Resource
+                                      : FT_New_Memory_Face(m_freeType, fontBytes.data(), fontBytes.size(), 0, &face);
+    } else
+#endif
+    {
+        fontError = FT_New_Face(m_freeType, NarrowString(directory).c_str(), 0, &face);
+    }
+    if (fontError)
         return nullptr;
     std::string source = std::string(face->family_name) + " " + face->style_name;
     FT_Set_Pixel_Sizes(face, ImportedGlyphPixelHeight, ImportedGlyphPixelHeight);
@@ -1071,7 +1085,7 @@ bool Engine::readPlasmaFileIntoNode(const std::wstring &path, Node *target, int 
     int slash = path.find_last_of(L'/');
     int backslash = path.find_last_of(L'\\');
     int separator = (std::max)(slash, backslash);
-    std::ifstream stream(path.c_str(), std::ios::binary);
+    GameDataStream stream(FilePath(path), std::ios::binary);
     if (!stream.is_open())
         return false;
     std::wstring directory = path.substr(0, separator);
@@ -1746,11 +1760,11 @@ PlasmaFont *Engine::loadPlasmaFont(const std::wstring &path, float size)
     int separator = (std::max)(slash, backslash);
     std::wstring basename = path.substr(separator + 1, path.size() - separator - 1);
     std::wstring directory;
-    std::ifstream stream;
-    stream.open(path.c_str(), std::ios::in | std::ios::binary);
+    GameDataStream stream;
+    stream.open(FilePath(path), std::ios::in | std::ios::binary);
     if (!stream.is_open()) {
         for (std::list<std::wstring>::iterator it = m_fontPaths.begin(); it != m_fontPaths.end(); ++it) {
-            stream.open((*it + L"/" + basename).c_str(), std::ios::in | std::ios::binary);
+            stream.open(FilePath(*it + L"/" + basename), std::ios::in | std::ios::binary);
             if (stream.is_open()) {
                 directory = *it;
                 break;
@@ -2081,12 +2095,10 @@ std::wstring readWString(std::istream &stream)
     int length = readValue<int>(stream);
     if (!length)
         return std::wstring(L"");
-    wchar_t *buffer = new wchar_t[length + 1];
-    buffer[length] = 0;
-    stream.read(reinterpret_cast<char *>(buffer), length * 2);
-    std::wstring value(buffer);
-    delete[] buffer;
-    return value;
+    // The file stores 16-bit characters, which wchar_t is on Windows only.
+    std::vector<char16_t> buffer(length + 1);
+    stream.read(reinterpret_cast<char *>(buffer.data()), length * 2);
+    return std::wstring(buffer.begin(), std::find(buffer.begin(), buffer.end(), u'\0'));
 }
 
 Widget *Engine::readWidget(std::istream &stream)

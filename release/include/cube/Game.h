@@ -4,9 +4,11 @@
 // types remain opaque.
 #pragma once
 #include <windows.h>
+#include <array>
 #include <atomic>
 #include <list>
 #include <map>
+#include <optional>
 #include <set>
 #include <string>
 #include <thread>
@@ -221,6 +223,7 @@ public:
     void onKeyTyped(unsigned char character);
     // Handles the character selection's Play button.
     void onSelectCharacter();
+    bool findingCharacterStart() const { return m_characterStartSearch.has_value(); }
     // The world selection's "Select": resets the camera and changes to the selected world, or opens the world creation
     // page for an empty slot.
     void onSelectWorld();
@@ -272,6 +275,29 @@ public:
     void updateSorting();
     void updateSpeech(double step);
     bool talkAboutTownQuest(Creature &giver, std::vector<Dialog> &dialogs);
+    // Overworld encounters (Encounters.cpp): referrals by friendly travelers, their adventurers' talk, their cage,
+    // sack and chest, rewards, the chest guardian's key, the tracker line and the records the character keeps.
+    bool talkAboutEncounter(Creature &speaker, std::vector<Dialog> &dialogs);
+    bool handleEncounterObject(Creature &target, bool usePressed);
+    bool talkAboutVillageEncounter(Creature &speaker, const std::array<int, 2> &town, std::vector<Dialog> &dialogs);
+    void rewardEncounter(Encounter &encounter, Creature *thanking, bool inTown = false);
+    void updateEncounterQuests();
+    // The world that runs the encounters: this game's own host, unless the game has joined another host.
+    World *encounterHost();
+    // Refreshes this game's copy of the host's encounters. The caller holds the host's world.
+    void mirrorEncounters(World &host);
+    // Saves the character with the host's current encounters.
+    void saveEncounterProgress();
+    // Announces a new swimming or climbing level.
+    void updateTravelSkills();
+    std::array<int, 3> m_shownTravelLevels {-1, -1, -1}; // swimming, climbing, riding
+    // The HUD's travel-skill bars: when each skill last gained time (Game clock, seconds), and the time it had.
+    std::array<double, 3> m_travelTrainedAt {-1.0e9, -1.0e9, -1.0e9};
+    std::array<float, 3> m_travelSeenSeconds {-1.0f, -1.0f, -1.0f};
+    // How visible skill i's bar is now: 1 for 55 seconds after it was trained, fading out over the next 5.
+    float travelBarAlpha(int skill) const;
+    std::wstring encounterSummary();
+    void keepEncounters();
     bool updateTownQuest(const ServerUpdates::KillPacket &kill);
     // Gives the requests taken without targets an enemy group once one is near the player.
     bool assignTownQuestTargets();
@@ -385,6 +411,14 @@ public:
     std::atomic<bool> m_running;
     int m_seed;
     std::string m_worldName;
+    struct CharacterStartSearch {
+        World::StartCellSearch search;
+        int selectedSlot;
+    };
+    std::optional<CharacterStartSearch> m_characterStartSearch;
+    void advanceCharacterStartSearch();
+    void beginNewCharacter(const plasma::Vector<2, int> &startCell);
+
     bool m_waitingForTerrain = true;
     bool m_placeOnTerrain = false;
     std::list<Particle> m_particles; // Records filled from a sprite's voxels.
@@ -416,7 +450,7 @@ public:
         m_requestedZones; // Requested zone coordinates; Client::update sends packet 15 once a second and Host::receive queues them for the connection.
     std::list<MissionNotice> m_missionNotices; // Queued notices displayed one at a time.
     int m_resetOnDisconnect;                   // 0; disconnect zeroes it again; nothing reads it
-    int m_currentCharacterSlot;
+    int m_currentCharacterSlot = -1;
     Database m_charactersDatabase; // Character database at Save/characters.db.
     Database m_worldsDatabase;     // Database holding the saved-world list.
 };

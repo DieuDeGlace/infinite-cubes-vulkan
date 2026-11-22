@@ -24,6 +24,7 @@ class CharacterPreviewWidget;
 class CharacterStyleWidget;
 class InventoryWidget;
 class CharacterWidget;
+class TravelSkillBarWidget;
 class FormulaDetailsWidget;
 class SystemWidget;
 class EnchantWidget;
@@ -93,6 +94,7 @@ struct Interface {
         std::vector<plasma::Node *> m_menuButtons;
         plasma::Node *m_levelText;
         plasma::Node *m_auraBar;
+        int m_auraCount = 0;               // buff icons in m_auraBar (the mana pump's mana absorption among them)
         plasma::Node *m_hpBar;             // "hpbar"
         plasma::Node *m_hpBarFill;         // "bar" under hpbar
         plasma::Node *m_mpBar;             // "mpbar"
@@ -120,6 +122,7 @@ struct Interface {
         plasma::Node *m_comboPoints;     // "combopoints"
         InventoryWidget *m_equipmentInventoryWidget;
         CharacterWidget *m_characterWidget;
+        TravelSkillBarWidget *m_travelSkillBars; // below the coin
         InventoryWidget *m_craftingInventoryWidget;
         FormulaDetailsWidget *m_formulaDetailsWidget; // Read by Game.
         InventoryWidget *m_vendorInventoryWidget;

@@ -13,8 +13,12 @@
 #include "Parallel.h"
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <iostream>
+#include <memory>
 #include <mutex>
+#include <optional>
+#include <chrono>
 #include <sstream>
 
 #include <zlib.h>
@@ -147,6 +151,35 @@ private:
     World &m_world;
 };
 
+class CriticalSectionLock {
+public:
+    explicit CriticalSectionLock(CRITICAL_SECTION &section)
+        : m_section(section)
+    {
+        EnterCriticalSection(&m_section);
+    }
+    ~CriticalSectionLock() { LeaveCriticalSection(&m_section); }
+    CriticalSectionLock(const CriticalSectionLock &) = delete;
+    CriticalSectionLock &operator=(const CriticalSectionLock &) = delete;
+
+private:
+    CRITICAL_SECTION &m_section;
+};
+
+static std::unique_ptr<Creature> copyCharacter(const Creature &player)
+{
+    auto character = std::make_unique<Creature>(0);
+    character->m_entityData = player.m_entityData;
+    character->m_pyroProgression = player.m_pyroProgression;
+    character->m_petWaterLevel = player.m_petWaterLevel;
+    character->m_unreadSavedInt = player.m_unreadSavedInt;
+    character->m_playerData = new PlayerData(*player.m_playerData);
+    character->m_inventory = player.m_inventory;
+    character->m_buffs = player.m_buffs;
+    character->m_drawnPosition = character->m_entityData.position;
+    return character;
+}
+
 static void configureWorldWorker(int performance, int &previousPerformance)
 {
     if (performance == previousPerformance)
@@ -230,6 +263,8 @@ Game::Game(World *world, WorldMap *worldMap, gfx::Renderer *renderer, plasma::En
       m_socket(0),
       m_resetOnDisconnect(0)
 {
+    m_host.m_world.m_travelDungeons = m_world->m_travelDungeons;
+    m_host.m_world.m_spawnDensity = m_world->m_spawnDensity;
     InitializeCriticalSectionAndSpinCount(&m_unusedLock1ce8, 4000);
     InitializeCriticalSectionAndSpinCount(&m_unusedLock1cc0, 16);
     InitializeCriticalSectionAndSpinCount(&m_musicCriticalSection, 16);
@@ -253,6 +288,11 @@ Game::Game(World *world, WorldMap *worldMap, gfx::Renderer *renderer, plasma::En
             Creature *creature = new Creature(0);
             loadCharacter(i, creature);
             m_savedCharacters.push_back(creature);
+        }
+        // A previous build could update the count before writing the last character.
+        while (!m_savedCharacters.empty() && !m_savedCharacters.back()->m_playerData) {
+            delete m_savedCharacters.back();
+            m_savedCharacters.pop_back();
         }
     }
     std::cout << "create iface" << std::endl;
@@ -286,10 +326,13 @@ Game::Game(World *world, WorldMap *worldMap, gfx::Renderer *renderer, plasma::En
     m_world->m_localCreature = player;
     m_world->spawnLocalCreature();
     {
-        BytesIO slot;
-        if (m_charactersDatabase.read("slot", slot)) {
-            slot.read(m_currentCharacterSlot);
-            loadCharacter(m_currentCharacterSlot, m_world->getLocalCreature());
+        BytesIO data;
+        int slot = -1;
+        if (m_charactersDatabase.read("slot", data))
+            data.read(slot);
+        if (slot >= 0 && slot < (int)m_savedCharacters.size() && m_savedCharacters[slot]->m_playerData) {
+            m_currentCharacterSlot = slot;
+            loadCharacter(slot, m_world->getLocalCreature());
             m_world->spawnLocalCreature();
             learnFormulas(0);
             m_interface.updateStyle();
@@ -2339,6 +2382,9 @@ void Game::learnFormulas(int rarity)
 // compressed character record) into creature. A character that does not know formula 7 yet learns it.
 void Game::loadCharacter(int slot, Creature *creature)
 {
+    m_shownTravelLevels = {-1, -1, -1}; // a loaded character's levels are not news
+    m_travelSeenSeconds = {-1.0f, -1.0f, -1.0f};
+    m_travelTrainedAt = {-1.0e9, -1.0e9, -1.0e9};
     m_world->enterZoneMeshes();
     creature->m_pyroProgression = m_world->m_pyroProgression;
     std::stringstream key;
@@ -2469,42 +2515,53 @@ void Game::onDeleteWorld()
     }
 }
 
-// The character creation's "Done": names the new character after the name field, makes it the next slot of the
-// characters database, saves it and adds a copy to the saved characters.
+// Store the new character and its slot information before leaving the editor.
 void Game::onDoneCharacter()
 {
+    if (!m_interface.m_characterCreationNode->isVisible())
+        return;
+
+    const std::string name = NarrowString(m_interface.m_characterName->getText(L"edit", true));
+    if (name.size() < 2 || name.size() >= sizeof(Creature::EntityData::name))
+        return;
+
     m_interface.m_characterStyleWidget->commitHairColors();
-    m_interface.m_characterCreationNode->setVisible(false);
-    std::string name = NarrowString(m_interface.m_characterName->getText(L"edit", true));
-    strcpy(m_world->m_localCreature->m_entityData.name, name.c_str());
-    m_world->m_localCreature->m_entityData.level = 1;
-    m_world->m_localCreature->m_playerData->discoveredMarkers.insert(std::array<int, 2> {
-        {m_world->m_localCreature->m_entityData.portCity[0], m_world->m_localCreature->m_entityData.portCity[1]}});
-    m_interface.m_inGame.m_helpWidget->getNode()->setVisible(true);
-    BytesIO data;
-    int count = (int)m_savedCharacters.size() + 1;
-    data.write(count);
-    m_charactersDatabase.write("num", data);
-    m_world->enterZoneMeshes();
-    m_currentCharacterSlot = count - 1;
-    saveCharacter();
-    m_world->leaveZoneMeshes();
+    const int slot = (int)m_savedCharacters.size();
+    m_savedCharacters.reserve(slot + 1);
+    std::unique_ptr<Creature> saved;
     {
-        BytesIO slot;
-        slot.write(m_currentCharacterSlot);
-        m_charactersDatabase.write("slot", slot);
+        const ZoneMeshLock meshes(*m_world);
+        Creature &player = *m_world->getLocalCreature();
+        strcpy_s(player.m_entityData.name, sizeof(player.m_entityData.name), name.c_str());
+        player.m_entityData.level = 1;
+        const auto &city = player.m_entityData.portCity;
+        player.m_playerData->discoveredMarkers.insert({city[0], city[1]});
+        saved = copyCharacter(player);
     }
-    Creature *saved = new Creature(0);
-    saved->m_entityData = m_world->m_localCreature->m_entityData;
-    saved->m_pyroProgression = m_world->m_pyroProgression;
-    saved->m_inventory = m_world->getLocalCreature()->m_inventory;
-    saved->m_buffs = m_world->m_localCreature->m_buffs;
-    saved->m_drawnPosition = saved->m_entityData.position;
-    saved->m_playerData = new PlayerData;
-    *(CharacterStyle *)saved->m_playerData = *m_world->m_localCreature->m_playerData;
-    saved->m_playerData->hairGradient = m_world->m_localCreature->m_playerData->hairGradient;
-    saved->m_playerData->knownFormulas = m_world->m_localCreature->m_playerData->knownFormulas;
-    m_savedCharacters.push_back(saved);
+
+    BytesIO record;
+    Serializer(&record).saveCreature(saved.get());
+    compressBytes(record);
+    BytesIO count, selection;
+    count.write(slot + 1);
+    selection.write(slot);
+    bool written;
+    {
+        const CriticalSectionLock lock(m_characterCriticalSection);
+        written =
+            m_charactersDatabase.writeBatch({{std::to_string(slot), record}, {"num", count}, {"slot", selection}});
+    }
+    if (!written) {
+        m_interface.m_createCharacterButton->setText(L"Could not save. Tap to retry");
+        return;
+    }
+    {
+        const ZoneMeshLock meshes(*m_world);
+        m_currentCharacterSlot = slot;
+    }
+    m_savedCharacters.push_back(saved.release());
+    m_interface.m_characterCreationNode->setVisible(false);
+    m_interface.m_inGame.m_helpWidget->getNode()->setVisible(true);
     m_interface.updateSlots();
     m_interface.updateStyle();
     m_interface.refresh();
@@ -2572,70 +2629,99 @@ void Game::onP2PSessionRequest(P2PSessionRequest_t *request)
     }
 }
 
-// The character selection's "Play". A saved slot loads that character and records the slot in the characters database;
-// any other selection starts a new character: the local player is reset to a level 1 warrior at a random start cell
-// and the character creation page opens.
+// Load a saved character, or start looking for a village for a new character.
 void Game::onSelectCharacter()
 {
-    m_interface.m_characterSelection.m_node->setVisible(false);
-    m_world->enterZoneMeshes();
-    m_currentCharacterSlot = m_interface.m_selectedCharacter;
-    if (m_currentCharacterSlot >= 0 && m_currentCharacterSlot < (int)m_savedCharacters.size()) {
-        resumeCharacter();
-        BytesIO data;
-        data.write(m_interface.m_selectedCharacter);
-        m_charactersDatabase.write("slot", data);
-        m_interface.updateStyle();
-        m_interface.refresh();
-        updateFormulas();
-        m_targetCameraDistance = 8.0f;
-        m_cameraDistance = 8.0f;
-        m_targetCameraAngle = plasma::Vector<3, double>(90.0, 0.0, 180.0);
-        m_cameraAngle = m_targetCameraAngle;
-    } else {
-        m_targetCameraDistance = 8.0f;
-        m_cameraDistance = 8.0f;
-        m_targetCameraAngle = plasma::Vector<3, double>(90.0, 0.0, 0.0);
-        m_cameraAngle = m_targetCameraAngle;
-        m_interface.m_characterCreationNode->setVisible(true);
-        m_world->m_localCreature->reset();
-        m_world->m_localCreature->m_entityData.name[0] = 0;
-        m_world->m_localCreature->m_entityData.hostilityType = HostilityPlayer;
-        m_world->m_localCreature->m_entityData.rotation = plasma::Vector<3, float>(0, 0, 0);
-        m_world->m_localCreature->m_entityData.velocity = plasma::Vector<3, float>(0, 0, 0);
-        m_world->m_localCreature->m_entityData.flags = CreatureFlagNone;
-        m_world->m_localCreature->m_entityData.level = 1;
-        m_world->m_localCreature->m_entityData.progressionLevel = 1;
-        m_world->m_localCreature->m_entityData.xp = 0;
-        Creature *player = m_world->m_localCreature;
-        player->m_entityData.hp = player->maxHP();
-        m_world->m_localCreature->m_entityData.equipment.weaponRight.category = ItemCategoryWeapon;
-        m_world->m_localCreature->m_entityData.equipment.weaponRight.id = WeaponSword;
-        m_world->m_localCreature->m_entityData.equipment.weaponRight.material = ItemMaterialIron;
-        m_world->m_localCreature->m_entityData.equipment.weaponLeft.category = ItemCategoryWeapon;
-        m_world->m_localCreature->m_entityData.equipment.weaponLeft.id = WeaponSword;
-        m_world->m_localCreature->m_entityData.equipment.weaponLeft.material = ItemMaterialIron;
-        m_world->m_localCreature->m_entityData.equipment.chest.material = ItemMaterialIron;
-        m_world->m_localCreature->m_entityData.hostilityType = HostilityPlayer;
-        m_world->m_localCreature->m_entityData.classType = ClassWarrior;
-        m_world->getLocalCreature()->m_entityData.portCity = m_world->randomStartCell();
-        m_world->m_localCreature->m_entityData.position =
-            plasma::Vector<3, Fixed>(Fixed(m_world->m_localCreature->m_entityData.portCity[0] * 16 + 8),
-                                     Fixed((m_world->m_localCreature->m_entityData.portCity[1] + 2) * 16), Fixed(0));
-        m_world->m_localCreature->m_entityData.position[2] =
-            m_world->terrainHeight((int)m_world->m_localCreature->m_entityData.position[0],
-                                   (int)m_world->m_localCreature->m_entityData.position[1], false);
-        if (m_world->m_localCreature->m_playerData) {
-            delete m_world->m_localCreature->m_playerData;
-        }
-        m_world->m_localCreature->m_playerData = new PlayerData;
-        m_interface.m_characterName->setText(L"");
-        m_interface.m_characterStyleWidget->reset();
-        m_interface.m_characterStyleWidget->updateCreature(false);
-        m_world->spawnLocalCreature();
-        m_waitingForTerrain = true;
+    const int slot = m_interface.m_selectedCharacter;
+    if (slot < 0 || !m_interface.m_characterSelection.m_node->isVisible())
+        return;
+    if (slot >= (int)m_savedCharacters.size() || !m_savedCharacters[slot]->m_playerData) {
+        if (!m_characterStartSearch || m_characterStartSearch->selectedSlot != slot)
+            m_characterStartSearch = CharacterStartSearch {m_world->beginStartCellSearch(), slot};
+        return;
     }
-    m_world->leaveZoneMeshes();
+
+    m_characterStartSearch.reset();
+    m_interface.m_characterSelection.m_node->setVisible(false);
+    const ZoneMeshLock meshes(*m_world);
+    m_currentCharacterSlot = slot;
+    resumeCharacter();
+    BytesIO data;
+    data.write(slot);
+    m_charactersDatabase.write("slot", data);
+    m_interface.updateStyle();
+    m_interface.refresh();
+    updateFormulas();
+    m_targetCameraDistance = 8.0f;
+    m_cameraDistance = 8.0f;
+    m_targetCameraAngle = plasma::Vector<3, double>(90.0, 0.0, 180.0);
+    m_cameraAngle = m_targetCameraAngle;
+}
+
+void Game::advanceCharacterStartSearch()
+{
+    if (!m_characterStartSearch)
+        return;
+    if (!m_interface.m_characterSelection.m_node->isVisible() ||
+        m_interface.m_selectedCharacter != m_characterStartSearch->selectedSlot) {
+        m_characterStartSearch.reset();
+        return;
+    }
+    if (m_host.m_worldChangePending)
+        return;
+
+    using Clock = std::chrono::steady_clock;
+    const ZoneMeshLock meshes(*m_world);
+    const auto deadline = Clock::now() + std::chrono::milliseconds(2);
+    do {
+        if (const auto cell = m_world->probeStartCell(m_characterStartSearch->search)) {
+            m_characterStartSearch.reset();
+            beginNewCharacter(*cell);
+            return;
+        }
+    } while (Clock::now() < deadline);
+}
+
+void Game::beginNewCharacter(const plasma::Vector<2, int> &startCell)
+{
+    m_interface.m_characterSelection.m_node->setVisible(false);
+    m_targetCameraDistance = 8.0f;
+    m_cameraDistance = 8.0f;
+    m_targetCameraAngle = plasma::Vector<3, double>(90.0, 0.0, 0.0);
+    m_cameraAngle = m_targetCameraAngle;
+    m_currentCharacterSlot = -1;
+    m_interface.m_createCharacterButton->setText(L"Create Character");
+    m_interface.m_characterCreationNode->setVisible(true);
+
+    Creature &player = *m_world->getLocalCreature();
+    player.reset();
+    auto &data = player.m_entityData;
+    data.name[0] = 0;
+    data.hostilityType = HostilityPlayer;
+    data.rotation = plasma::Vector<3, float>(0, 0, 0);
+    data.velocity = plasma::Vector<3, float>(0, 0, 0);
+    data.flags = CreatureFlagNone;
+    data.level = 1;
+    data.progressionLevel = 1;
+    data.xp = 0;
+    data.hp = player.maxHP();
+    data.equipment.weaponRight.category = ItemCategoryWeapon;
+    data.equipment.weaponRight.id = WeaponSword;
+    data.equipment.weaponRight.material = ItemMaterialIron;
+    data.equipment.weaponLeft = data.equipment.weaponRight;
+    data.equipment.chest.material = ItemMaterialIron;
+    data.classType = ClassWarrior;
+    data.portCity = startCell;
+    const int x = startCell[0] * BlocksPerCell + 8;
+    const int y = (startCell[1] + 2) * BlocksPerCell;
+    data.position = plasma::Vector<3, Fixed>(Fixed(x), Fixed(y), Fixed(m_world->terrainHeight(x, y, 0)));
+    delete player.m_playerData;
+    player.m_playerData = new PlayerData;
+    m_interface.m_characterName->setText(L"");
+    m_interface.m_characterStyleWidget->reset();
+    m_interface.m_characterStyleWidget->updateCreature(false);
+    m_world->spawnLocalCreature();
+    m_waitingForTerrain = true;
 }
 
 void Game::onSelectWorld()
@@ -2855,35 +2941,25 @@ float roundTenth(float value)
     return (float)(int)(value * 10.0f + 0.5f) * 0.1f;
 }
 
-// Writes the local player to the characters database under the current slot's number: a copy of the creature (its
-// data, its buffs, its inventory and its player data) is made while the zones are locked and then serialised and
-// compressed. The copy of the world's state is not used.
+// Snapshot the character under the zone lock, then serialize it while holding the database lock.
 void Game::saveCharacter()
 {
-    m_world->enterZoneMeshes();
-    int slot = m_currentCharacterSlot;
-    if (slot < 0) {
-        m_world->leaveZoneMeshes();
-        return;
+    int slot;
+    std::unique_ptr<Creature> character;
+    std::optional<CriticalSectionLock> databaseLock;
+    {
+        const ZoneMeshLock meshes(*m_world);
+        slot = m_currentCharacterSlot;
+        if (slot < 0)
+            return;
+        databaseLock.emplace(m_characterCriticalSection);
+        keepEncounters();
+        character = copyCharacter(*m_world->getLocalCreature());
     }
-    EnterCriticalSection(&m_characterCriticalSection);
-    Creature *creature = new Creature(0);
-    creature->m_entityData = m_world->m_localCreature->m_entityData;
-    creature->m_petWaterLevel = m_world->m_localCreature->m_petWaterLevel;
-    creature->m_unreadSavedInt = m_world->m_localCreature->m_unreadSavedInt;
-    creature->m_playerData = new PlayerData(*m_world->m_localCreature->m_playerData);
-    creature->m_inventory = m_world->getLocalCreature()->m_inventory;
-    creature->m_buffs = m_world->m_localCreature->m_buffs;
-    World::WorldState state = m_world->m_state;
-    m_world->leaveZoneMeshes();
     BytesIO data;
-    Serializer(&data).saveCreature(creature);
-    delete creature;
-    std::stringstream key;
-    key << slot;
+    Serializer(&data).saveCreature(character.get());
     compressBytes(data);
-    m_charactersDatabase.write(key.str(), data);
-    LeaveCriticalSection(&m_characterCriticalSection);
+    m_charactersDatabase.write(std::to_string(slot), data);
 }
 
 // Writes a world's entry to the worlds database under its index: the name, the seed, the explored area, and the
@@ -3390,6 +3466,7 @@ int Game::soundId(int sound)
 void Game::update(double milliseconds)
 {
     applyWorldChange();
+    advanceCharacterStartSearch();
 
     // Frame time capped at one second.
     double step = milliseconds > 1000.0 ? 1000.0 : milliseconds;
@@ -4433,6 +4510,8 @@ void Game::update(double milliseconds)
     progressChanged |= assignTownQuestTargets();
     if (progressChanged)
         saveCharacter();
+    updateEncounterQuests();
+    updateTravelSkills();
 
     // The menu keys, on their press, while the chat is not typed into and no start menu is shown; the equipment slots
     // follow the equipment inventory and the formula details the crafting inventory.
@@ -6647,6 +6726,9 @@ bool Game::interactionPrompt()
         }
         return true;
     }
+    // An encounter's cage, sack or chest answers before the native objects' prompts.
+    if (target && handleEncounterObject(*target, usePressed))
+        return true;
     if (target) {
         if ((target->m_entityData.appearance.appearanceFlags & AppearanceFlagPassive) ||
             (target->m_entityData.hostilityType == HostilityEnemy &&
@@ -6713,7 +6795,7 @@ bool Game::interactionPrompt()
                             }
                         } else {
                             std::vector<Dialog> dialogs;
-                            if (!talkAboutTownQuest(*target, dialogs)) {
+                            if (!talkAboutEncounter(*target, dialogs) && !talkAboutTownQuest(*target, dialogs)) {
                                 std::vector<std::string> script = m_world->talkScript(target);
                                 m_speech.generateFromScript(script, (unsigned long long)target->m_id % 100000, dialogs,
                                                             L"");
@@ -8128,66 +8210,41 @@ void Game::updateFx(int milliseconds)
 
 void Game::updateSorting()
 {
-    // Equipment: items of the shown region first, then what the player can equip, then by power.
-    std::sort(m_world->m_localCreature->m_inventory.m_inventoryTabs[0].begin(),
-              m_world->m_localCreature->m_inventory.m_inventoryTabs[0].end(),
-              [this](const ItemStack &a, const ItemStack &b) -> bool {
-                  if (b.quantity == 0) {
-                      return true;
-                  }
-                  if (a.quantity == 0) {
-                      return false;
-                  }
-                  bool aLocal = m_interface.m_inGame.m_equipmentInventoryWidget->m_region == a.item.region;
-                  bool bLocal = m_interface.m_inGame.m_equipmentInventoryWidget->m_region == b.item.region;
-                  bool aUsable = m_world->getLocalCreature()->canEquipItem(a.item);
-                  bool bUsable = m_world->getLocalCreature()->canEquipItem(b.item);
-                  return (aLocal && !bLocal) ||
-                         (aLocal == bLocal &&
-                          ((aUsable && !bUsable) ||
-                           (aUsable == bUsable && a.item.power(m_world->getLocalCreature(), 0) >
-                                                      b.item.power(m_world->getLocalCreature(), 0))));
-              });
-    for (int i = 2; i < (int)m_world->m_localCreature->m_inventory.m_inventoryTabs.size(); i++) {
-        std::sort(m_world->m_localCreature->m_inventory.m_inventoryTabs[i].begin(),
-                  m_world->m_localCreature->m_inventory.m_inventoryTabs[i].end(),
-                  [](const ItemStack &a, const ItemStack &b) -> bool {
-                      if (b.quantity == 0) {
-                          return true;
-                      }
-                      if (a.quantity == 0) {
-                          return false;
-                      }
-                      if (a.item.category < b.item.category ||
-                          (a.item.category == b.item.category && a.item.id < b.item.id)) {
-                          return true;
-                      }
-                      return false;
-                  });
-    }
-    std::sort(m_world->m_localCreature->m_inventory.m_inventoryTabs[1].begin(),
-              m_world->m_localCreature->m_inventory.m_inventoryTabs[1].end(),
-              [this](const ItemStack &a, const ItemStack &b) -> bool {
-                  if (b.quantity == 0) {
-                      return true;
-                  }
-                  if (a.quantity == 0) {
-                      return false;
-                  }
-                  bool aLocal = m_interface.m_inGame.m_equipmentInventoryWidget->m_region == a.item.region;
-                  bool bLocal = m_interface.m_inGame.m_equipmentInventoryWidget->m_region == b.item.region;
-                  return (aLocal && !bLocal) ||
-                         (aLocal == bLocal && (a.item.category < b.item.category ||
-                                               (a.item.category == b.item.category && a.item.id < b.item.id)));
-              });
-    for (std::vector<ItemStack> &tab : m_world->m_localCreature->m_inventory.m_inventoryTabs) {
-        int count = 0;
-        for (ItemStack &stack : tab) {
-            if (stack.quantity != 0) {
-                count++;
-            }
+    const ZoneMeshLock meshes(*m_world);
+    Creature *player = m_world->getLocalCreature();
+    auto &tabs = player->m_inventory.m_inventoryTabs;
+    const auto &region = m_interface.m_inGame.m_equipmentInventoryWidget->m_region;
+    const auto byItem = [](const ItemStack &a, const ItemStack &b) {
+        return a.item.category < b.item.category || (a.item.category == b.item.category && a.item.id < b.item.id);
+    };
+
+    for (size_t index = 0; index < tabs.size(); ++index) {
+        auto &tab = tabs[index];
+        tab.erase(std::remove_if(tab.begin(), tab.end(), [](const ItemStack &stack) { return stack.quantity == 0; }),
+                  tab.end());
+
+        if (index == InventoryTabEquipment) {
+            // Equipment: the shown region first, then items the player can equip, then the strongest items.
+            std::sort(tab.begin(), tab.end(), [&](const ItemStack &a, const ItemStack &b) {
+                const bool aLocal = a.item.region == region;
+                const bool bLocal = b.item.region == region;
+                if (aLocal != bLocal)
+                    return aLocal;
+                const bool aUsable = player->canEquipItem(a.item);
+                const bool bUsable = player->canEquipItem(b.item);
+                if (aUsable != bUsable)
+                    return aUsable;
+                return a.item.power(player, 0) > b.item.power(player, 0);
+            });
+        } else if (index == InventoryTabSpecial) {
+            std::sort(tab.begin(), tab.end(), [&](const ItemStack &a, const ItemStack &b) {
+                const bool aLocal = a.item.region == region;
+                const bool bLocal = b.item.region == region;
+                return aLocal != bLocal ? aLocal : byItem(a, b);
+            });
+        } else {
+            std::sort(tab.begin(), tab.end(), byItem);
         }
-        tab.resize(count);
     }
 }
 
@@ -8781,7 +8838,15 @@ void Game::useItem(ItemStack &stack)
         }
     }
     if (stack.item.category == ItemCategorySpecial && m_world->m_localCreature->m_entityData.stunTime <= 0.0f) {
-        if (m_world->m_localCreature->m_entityData.region != stack.item.region) {
+        if (stack.item.travelGearAnywhere() && !m_world->m_localCreature->meetsTravelGearSkill(stack.item.id)) {
+            playSound(SoundHumanVoice01, m_cameraPosition, 1.0f, 1.0f, true);
+            m_interface.m_inGame.m_chatWidget->printMessage(
+                L"You need " + std::wstring(Creature::travelSkillName(Creature::travelGearSkill(stack.item.id))) +
+                    L" level " + std::to_wstring(Item::TravelGearLevel) + L" to use this.\n",
+                plasma::Vector<4, float>(1.0f, 0.4f, 0.35f, 1.0f));
+            return;
+        }
+        if (m_world->m_localCreature->m_entityData.region != stack.item.region && !stack.item.travelGearAnywhere()) {
             playSound(SoundHumanVoice01, m_cameraPosition, 1.0f, 1.0f, true);
             return;
         }
@@ -8949,6 +9014,18 @@ plasma::Vector<2, float> Game::writeItemInfo(BaseWidget *widget, Item *item, int
                                  ? rarityColor(item->rarity)
                                  : plasma::Vector<4, float>(1.0f, 0.4f, 0.35f, 1.0f));
         widget->renderText(L"Requires level " + std::to_wstring(level), position[0], position[1]);
+        position[1] += scale * 24.0f;
+    } else if (item->travelGearAnywhere()) {
+        // Travel gear works in every region, from its skill's level.
+        const int skill = Creature::travelGearSkill(item->id);
+        widget->setTextColor(m_world->m_localCreature->meetsTravelGearSkill(item->id)
+                                 ? plasma::Vector<4, float>(1.0f, 0.9f, 0.5f, 1.0f)
+                                 : plasma::Vector<4, float>(1.0f, 0.4f, 0.35f, 1.0f));
+        std::wstring need = skill == Creature::TravelSkillNone
+                                ? std::wstring(L"Works in every region")
+                                : L"Requires " + std::wstring(Creature::travelSkillName(skill)) + L" level " +
+                                      std::to_wstring(Item::TravelGearLevel) + L"; works in every region";
+        widget->renderText(need, position[0], position[1]);
         position[1] += scale * 24.0f;
     } else if (item->hasRegion()) {
         text.str(L"");
@@ -9340,6 +9417,52 @@ plasma::Vector<2, float> Game::writeItemInfo(BaseWidget *widget, Item *item, int
         position[1] += scale * 16.0f;
     }
     return position;
+}
+
+void Game::updateTravelSkills()
+{
+    Creature *player = m_world->getLocalCreature();
+    if (!player || !player->m_playerData)
+        return;
+    const int levels[] = {player->swimmingLevel(), player->climbingLevel(), player->ridingLevel()};
+    const float seconds[] = {player->m_playerData->swimmingSeconds, player->m_playerData->climbingSeconds,
+                             player->m_playerData->ridingSeconds};
+    const double now = std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count();
+    for (int i = 0; i < 3; ++i) {
+        // Time gained since the last look shows that skill's bar; the first look (a loaded character) does not.
+        if (m_travelSeenSeconds[i] >= 0.0f && seconds[i] > m_travelSeenSeconds[i])
+            m_travelTrainedAt[i] = now;
+        m_travelSeenSeconds[i] = seconds[i];
+    }
+    static constexpr const wchar_t *Names[] = {L"Swimming", L"Climbing", L"Riding"};
+    for (int i = 0; i < 3; ++i) {
+        // The first look (a loaded character) only remembers the levels.
+        if (m_shownTravelLevels[i] >= 0 && levels[i] > m_shownTravelLevels[i]) {
+            std::wstringstream text;
+            text.setf(std::ios::fixed);
+            text.precision(2);
+            text << Names[i] << L" level " << levels[i] << L": +" << levels[i] * Creature::TravelSkillBonus * 100.0f
+                 << L"% " << Names[i] << L" speed";
+            if (levels[i] == Item::TravelGearLevel && Item::s_travelGearAnywhere)
+                text << (i == 0   ? L". You can use a boat now"
+                         : i == 1 ? L". You can use a hang glider now"
+                                  : L". You can use reins now");
+            text << L"\n";
+            m_interface.m_inGame.m_chatWidget->printMessage(text.str(),
+                                                            plasma::Vector<4, float>(0.45f, 0.8f, 1.0f, 1.0f));
+        }
+        m_shownTravelLevels[i] = levels[i];
+    }
+}
+
+float Game::travelBarAlpha(int skill) const
+{
+    constexpr double Shown = 55.0, Fade = 5.0;
+    const double now = std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count();
+    const double age = now - m_travelTrainedAt[skill];
+    if (age < 0.0 || age >= Shown + Fade)
+        return 0.0f;
+    return age <= Shown ? 1.0f : float(1.0 - (age - Shown) / Fade);
 }
 
 }

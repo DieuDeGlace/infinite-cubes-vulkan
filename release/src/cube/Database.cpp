@@ -184,52 +184,41 @@ bool Database::rename(const std::string &oldKey, const std::string &newKey)
     return true;
 }
 
-bool Database::write(const std::string &key, BytesIO &value)
+bool Database::write(const std::string &key, const BytesIO &value)
 {
-    size_t size = value.m_data.size();
-    return write(key, value.m_data.empty() ? nullptr : &value.m_data[0], (int)size);
+    return write(key, value.m_data.data(), value.size());
 }
 
 bool Database::write(const std::string &key, const char *data, int size)
 {
-    sqlite3_stmt *statement;
-    if (sqlite3_prepare(m_db, "SELECT 1 FROM blobs WHERE key = ?", -1, &statement, nullptr) != SQLITE_OK) {
+    sqlite3_stmt *statement = nullptr;
+    if (sqlite3_prepare_v2(m_db, "INSERT OR REPLACE INTO blobs(key, value) VALUES(?, ?)", -1, &statement, nullptr) !=
+        SQLITE_OK)
         return false;
-    }
-    if (sqlite3_bind_text(statement, 1, key.c_str(), -1, SQLITE_STATIC) != SQLITE_OK) {
-        return false;
-    }
-    bool exists = sqlite3_step(statement) == SQLITE_ROW;
-    sqlite3_finalize(statement);
 
-    int result;
-    if (exists) {
-        sqlite3_stmt *update;
-        do {
-            result = sqlite3_prepare(m_db, "UPDATE blobs SET value=? WHERE key=?", -1, &update, nullptr);
-            if (result != SQLITE_OK) {
-                return false;
-            }
-            sqlite3_bind_blob(update, 1, data, size, SQLITE_STATIC);
-            sqlite3_bind_text(update, 2, key.c_str(), -1, SQLITE_STATIC);
-            sqlite3_step(update);
-            result = sqlite3_finalize(update);
-        } while (result == SQLITE_SCHEMA);
-    } else {
-        sqlite3_stmt *insert;
-        do {
-            result = sqlite3_prepare(m_db, "INSERT INTO blobs(key, value) VALUES(?, ?)", -1, &insert, nullptr);
-            if (result != SQLITE_OK) {
-                std::cout << "DATABASE WRITE ERROR" << std::endl;
-                return false;
-            }
-            sqlite3_bind_text(insert, 1, key.c_str(), -1, SQLITE_STATIC);
-            sqlite3_bind_blob(insert, 2, data, size, SQLITE_STATIC);
-            sqlite3_step(insert);
-            result = sqlite3_finalize(insert);
-        } while (result == SQLITE_SCHEMA);
+    const bool written = sqlite3_bind_text(statement, 1, key.c_str(), -1, SQLITE_STATIC) == SQLITE_OK &&
+                         sqlite3_bind_blob(statement, 2, data, size, SQLITE_STATIC) == SQLITE_OK &&
+                         sqlite3_step(statement) == SQLITE_DONE;
+    const int result = sqlite3_finalize(statement);
+    return written && result == SQLITE_OK;
+}
+
+bool Database::writeBatch(std::initializer_list<Record> records)
+{
+    if (sqlite3_exec(m_db, "BEGIN IMMEDIATE", nullptr, nullptr, nullptr) != SQLITE_OK)
+        return false;
+
+    for (const auto &record : records) {
+        if (!write(record.key, record.value)) {
+            sqlite3_exec(m_db, "ROLLBACK", nullptr, nullptr, nullptr);
+            return false;
+        }
     }
-    return true;
+
+    if (sqlite3_exec(m_db, "COMMIT", nullptr, nullptr, nullptr) == SQLITE_OK)
+        return true;
+    sqlite3_exec(m_db, "ROLLBACK", nullptr, nullptr, nullptr);
+    return false;
 }
 
 }

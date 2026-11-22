@@ -3,6 +3,7 @@
 #include "cube/Sprite.h"
 
 #include <algorithm>
+#include <cmath>
 #include <cstdlib>
 #include <math.h>
 #include <stdlib.h>
@@ -538,7 +539,7 @@ float Creature::attackPower(bool allWeapons)
         else if (m_entityData.hostilityType == HostilityEnemy)
             power *= 0.2f * progression::creatureScale(m_entityData.progressionLevel);
     }
-    return power;
+    return power * m_attackScale;
 }
 
 std::list<Item *> Creature::attackWeapons()
@@ -773,13 +774,76 @@ bool Creature::canUseSkill(int skill, bool flag)
     return mp > 0.0f;
 }
 
+int Creature::travelSkillLevel(float seconds)
+{
+    return std::min(TravelSkillCap, int(std::sqrt(std::max(0.0f, seconds) / 6.0f)));
+}
+
+int Creature::swimmingLevel() const
+{
+    return m_playerData ? travelSkillLevel(m_playerData->swimmingSeconds) : 0;
+}
+
+int Creature::climbingLevel() const
+{
+    return m_playerData ? travelSkillLevel(m_playerData->climbingSeconds) : 0;
+}
+
+int Creature::ridingLevel() const
+{
+    return m_playerData ? travelSkillLevel(m_playerData->ridingSeconds) : 0;
+}
+
+int Creature::travelGearSkill(int specialItem)
+{
+    switch (specialItem) {
+    case SpecialItemHangGlider:
+        return TravelSkillClimbing;
+    case SpecialItemBoat:
+        return TravelSkillSwimming;
+    case SpecialItemReins:
+        return TravelSkillRiding;
+    default:
+        return TravelSkillNone;
+    }
+}
+
+const wchar_t *Creature::travelSkillName(int skill)
+{
+    switch (skill) {
+    case TravelSkillClimbing:
+        return L"climbing";
+    case TravelSkillSwimming:
+        return L"swimming";
+    case TravelSkillRiding:
+        return L"riding";
+    default:
+        return L"";
+    }
+}
+
+bool Creature::meetsTravelGearSkill(int specialItem) const
+{
+    switch (travelGearSkill(specialItem)) {
+    case TravelSkillClimbing:
+        return climbingLevel() >= Item::TravelGearLevel;
+    case TravelSkillSwimming:
+        return swimmingLevel() >= Item::TravelGearLevel;
+    case TravelSkillRiding:
+        return ridingLevel() >= Item::TravelGearLevel;
+    default:
+        return true;
+    }
+}
+
 float Creature::climbingSpeed()
 {
     if (!(m_entityData.appearance.appearanceFlags & (AppearanceFlagTinted | AppearanceFlagLarge))) {
         if (m_entityData.hostilityType != HostilityPlayer) {
             return (1.0f - 1.0f / (m_entityData.level * 10 / 20.0f + 1.0f) + 1.0f) * 0.5f;
         }
-        return (1.0f - 1.0f / (m_artifactSkills[ArtifactEffect_ClimbingSpeed] / 20.0f + 1.0f) + 1.0f) * 0.5f;
+        return (1.0f - 1.0f / (m_artifactSkills[ArtifactEffect_ClimbingSpeed] / 20.0f + 1.0f) + 1.0f) * 0.5f *
+               (1.0f + climbingLevel() * TravelSkillBonus);
     }
     return 1.0f;
 }
@@ -5155,6 +5219,18 @@ bool Creature::hasSpecialItem(int id)
     item.category = ItemCategorySpecial;
     item.id = id;
     item.region = m_entityData.region;
+    if (item.travelGearAnywhere()) {
+        // Any region's, once the skill it needs is high enough.
+        if (!meetsTravelGearSkill(id))
+            return false;
+        for (const std::vector<ItemStack> &tab : m_inventory.m_inventoryTabs) {
+            for (const ItemStack &stack : tab) {
+                if (stack.quantity > 0 && stack.item.category == ItemCategorySpecial && stack.item.id == id)
+                    return true;
+            }
+        }
+        return false;
+    }
     return hasItem(item, 1);
 }
 
@@ -5690,6 +5766,7 @@ float Creature::maxHP()
     if (m_entityData.appearance.appearanceFlags & AppearanceFlagPromotedResident) {
         hp *= 1.1f;
     }
+    hp *= m_hpScale;
     if (m_pyroProgression) {
         if (m_entityData.hostilityType == HostilityPlayer)
             hp += m_entityData.progressionLevel - 1;
@@ -6445,7 +6522,8 @@ float Creature::ridingSpeed()
     if (m_entityData.hostilityType != HostilityPlayer) {
         return (1.0f - 1.0f / (m_entityData.level * 10 / 20.0f + 1.0f)) * 1.4f + 1.1f;
     }
-    return (1.0f - 1.0f / (m_artifactSkills[ArtifactEffect_RidingSpeed] / 20.0f + 1.0f)) * 1.4f + 1.1f;
+    return ((1.0f - 1.0f / (m_artifactSkills[ArtifactEffect_RidingSpeed] / 20.0f + 1.0f)) * 1.4f + 1.1f) *
+           (1.0f + ridingLevel() * TravelSkillBonus);
 }
 
 float Creature::sailingSpeed()
@@ -7130,7 +7208,7 @@ float Creature::spellPower(bool allWeapons)
         else if (m_entityData.hostilityType == HostilityEnemy)
             power *= 0.2f * progression::creatureScale(m_entityData.progressionLevel);
     }
-    return power;
+    return power * m_attackScale;
 }
 
 float Creature::staminaCost(int skill)
@@ -7333,7 +7411,8 @@ float Creature::swimmingSpeed()
         if (m_entityData.hostilityType != HostilityPlayer) {
             return (1.0f - 1.0f / (m_entityData.level * 10 / 20.0f + 1.0f) + 1.0f) * 0.5f;
         }
-        return (1.0f - 1.0f / (m_artifactSkills[ArtifactEffect_SwimmingSpeed] / 20.0f + 1.0f) + 1.0f) * 0.5f;
+        return (1.0f - 1.0f / (m_artifactSkills[ArtifactEffect_SwimmingSpeed] / 20.0f + 1.0f) + 1.0f) * 0.5f *
+               (1.0f + swimmingLevel() * TravelSkillBonus);
     }
     return 1.0f;
 }

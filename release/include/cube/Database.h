@@ -1,6 +1,7 @@
 // Database stores named byte blobs in SQLite. This file also declares zlib compression helpers and the data-file byte
 // scrambling routines used for database and network buffers.
 #pragma once
+#include <initializer_list>
 #include <string>
 #include <vector>
 
@@ -39,11 +40,17 @@ public:
     bool read(const std::string &key, BytesIO &value);
     // "UPDATE blobs SET key = ? WHERE key = ?" (newKey bound first). False only when the statement cannot be prepared.
     bool rename(const std::string &oldKey, const std::string &newKey);
-    // Stores value under key: "UPDATE blobs SET value=? WHERE key=?" when "SELECT 1 FROM blobs WHERE key = ?" finds
-    // the key, otherwise "INSERT INTO blobs(key, value) VALUES(?, ?)" (prints "DATABASE WRITE ERROR" when that cannot
-    // be prepared).
-    bool write(const std::string &key, BytesIO &value);
+    // Inserts or replaces a named blob.
+    bool write(const std::string &key, const BytesIO &value);
     bool write(const std::string &key, const char *data, int size);
+
+    struct Record {
+        std::string key;
+        const BytesIO &value;
+    };
+
+    // Commits the records together. The caller serializes access to this database connection.
+    bool writeBatch(std::initializer_list<Record> records);
 
 protected:
     sqlite3 *m_db; // sqlite3_open (open); 0 in the constructor

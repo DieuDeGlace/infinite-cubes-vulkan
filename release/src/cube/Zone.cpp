@@ -7159,7 +7159,8 @@ void Zone::generate()
             }
             // A boat (category 24, id 2) on a cell of the 16-cell grid in a biome 1 region whose centre lies below
             // height 10.
-            if (modulo(cellX, 16) == 0 && modulo(cellY, 16) == 0 &&
+            // (Not with the travel sites turned into dungeons, which give no travel equipment.)
+            if (!m_world->m_travelDungeons && modulo(cellX, 16) == 0 && modulo(cellY, 16) == 0 &&
                 m_world->landBiome(m_world->findRegion(cellX * BlocksPerCell, cellY * BlocksPerCell)) == BiomeOcean &&
                 m_world->height(x, y, 0) < 10.0f && positionCount(cellX, cellY, PositionNaturalGround) != 0) {
                 ZoneItem boat;
@@ -7178,7 +7179,10 @@ void Zone::generate()
             if (info.type == PlaceNone || influence < 0.5f) {
                 // Wild spawns: one column in 128 off the streets (below 0.25), near the region's site (the zone's
                 // place, 64 cells).
-                if (rand() % 128 == 0 && m_world->streetAmount(x, y, info.type, influence) < 0.25f) {
+                // m_spawnDensity (percent) scales the one in 128; it draws the same number of random values, so the
+                // rest of the zone generates as before.
+                if (rand() % 12800 < 100 * m_world->m_spawnDensity / 100 &&
+                    m_world->streetAmount(x, y, info.type, influence) < 0.25f) {
                     plasma::Vector<2, int> site = m_world->siteInZone(partIndex(cellX, BlocksPerPlace / BlocksPerCell),
                                                                       partIndex(cellY, BlocksPerPlace / BlocksPerCell));
                     if (squaredLength(plasma::Vector<2, int>(site[0] - cellX, site[1] - cellY)) > 16) {

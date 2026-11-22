@@ -2591,6 +2591,11 @@ void World::enterZoneMeshes()
     EnterCriticalSection(&m_zoneMeshCriticalSection);
 }
 
+bool World::tryEnterZoneMeshes()
+{
+    return TryEnterCriticalSection(&m_zoneMeshCriticalSection) != 0;
+}
+
 void World::enterZones()
 {
     EnterCriticalSection(&m_zonesLock);
@@ -2743,6 +2748,23 @@ void World::fillGeneralShop(Inventory &shop, const long long &shopId)
     item.category = ItemCategoryConsumable;
     item.id = ConsumableBomb;
     shop.add(item, -1, 0);
+    // The travel gear the converted travel sites no longer give, one of each for a player who has none.
+    if (Item::s_travelGearAnywhere) {
+        for (const int id : {SpecialItemHangGlider, SpecialItemBoat, SpecialItemClimbingSpikes, SpecialItemReins}) {
+            Item gear;
+            gear.category = ItemCategorySpecial;
+            gear.id = id;
+            gear.region = m_localCreature ? m_localCreature->m_entityData.region : plasma::Vector<2, int>(0, 0);
+            bool owned = false;
+            if (m_localCreature) {
+                for (const std::vector<ItemStack> &tab : m_localCreature->m_inventory.m_inventoryTabs)
+                    for (const ItemStack &stack : tab)
+                        owned |=
+                            stack.quantity > 0 && stack.item.category == ItemCategorySpecial && stack.item.id == id;
+            }
+            shop.add(gear, owned ? 0 : 1, 0);
+        }
+    }
 }
 
 void World::fillWeaponShop(Inventory &shop, Creature *shopkeeper)
@@ -4263,7 +4285,72 @@ static inline int coastType(float sea, int land, int deep)
 // sea in half of them) and is one of 24 kinds. Several kinds depend on the biome of the place's centre and on how far
 // it lies from the sea. The places: a lattice of large ones (one cell in 7 along x + 5y, salt 2805729 and 19 weights),
 // small ones by a hash (salt 2805729, 4 ways, 24 weights), lakes of all kinds at 10 blocks up at least, canyons at 50.
+thread_local int World::NativePlaces::depth = 0;
+
+// OverworldEvents' travel sites: a cell where the native missions put a hang glider, boat, climbing spikes or reins
+// holds a world-seeded Castle or Ancient Ruins (a large place) or Ancient Ruins, Crypt or Tower (a small one), the
+// dungeons each size takes natively.
 int World::locationType(int x, int y, bool large)
+{
+    if (!m_travelDungeons || NativePlaces::depth > 0)
+        return nativeLocationType(x, y, large);
+    // Classified places repeat often: some per thread are remembered.
+    struct Cached {
+        const World *world = nullptr;
+        int seed = 0, x = 0, y = 0, result = 0;
+        bool large = false;
+    };
+    thread_local std::array<Cached, 64> cache {};
+    Cached &cached = cache[(std::uint32_t(x) * 31u ^ std::uint32_t(y) * 17u) & 63u];
+    if (cached.world == this && cached.seed == m_seed && cached.x == x && cached.y == y && cached.large == large)
+        return cached.result;
+    const int type = nativeLocationType(x, y, large);
+    cached = {this, m_seed, x, y, type, large};
+    if (type == PlaceNone || type == PlaceVillage)
+        return type;
+    const int queryX = x, queryY = y;
+    if (large) {
+        x = floorDivide(x, 2) * 2;
+        y = floorDivide(y, 2) * 2;
+    }
+
+    // The owning region as the missions see it: finding it classifies places too.
+    plasma::Vector<2, int> found;
+    {
+        NativePlaces native;
+        found = findRegion(placeCenter(x, y, large));
+    }
+    const std::array<int, 3> region {m_seed, found[0], found[1]};
+    const std::array<int, 2> cell {x, y};
+    const auto isSite = [&](const std::vector<std::array<int, 2>> &sites) {
+        return std::find(sites.begin(), sites.end(), cell) != sites.end();
+    };
+    int site = -1;
+    {
+        std::lock_guard<std::mutex> lock(m_travelSitesMutex);
+        auto it = m_travelSites.find(region);
+        if (it != m_travelSites.end())
+            site = isSite(it->second);
+    }
+    if (site < 0) {
+        // Planned outside the lock: another thread may plan the same region, with the same result.
+        std::vector<std::array<int, 2>> sites = Missions(this, found).m_travelSites;
+        site = isSite(sites);
+        std::lock_guard<std::mutex> lock(m_travelSitesMutex);
+        m_travelSites.emplace(region, std::move(sites));
+    }
+    int result = type;
+    if (site) {
+        const unsigned pick = random(int(unsigned(x) + 7340891u + unsigned(m_seed) * 2654435761u), y);
+        static constexpr int Large[] = {PlaceCastle, PlaceAncientRuins};
+        static constexpr int Small[] = {PlaceAncientRuins, PlaceCrypt, PlaceTower};
+        result = large ? Large[pick % 2] : Small[pick % 3];
+    }
+    cached = {this, m_seed, queryX, queryY, result, large};
+    return result;
+}
+
+int World::nativeLocationType(int x, int y, bool large)
 {
     if (x == 0 && y == 0)
         return PlaceHouse;
@@ -5245,6 +5332,11 @@ void World::removeCreature(Creature *creature)
 void World::removeCreatures()
 {
     m_travelParties.clear();
+    m_encounters.clear();
+    m_landmarksDone.clear();
+    m_landmarkHoldsUtility.clear();
+    m_encountersImported = false;
+    m_encounterPlanDelay = 0.0f;
     m_travelPartyElapsed = 0.0f;
     m_travelSpawnDelay = 0.0f;
     for (Creature *creature : m_creatures) {
@@ -7035,74 +7127,82 @@ void World::retainLocalCreature()
     m_obstacles.clear();
 }
 
+// Choose a starting zone, then let the caller probe eastward until a village meets the starting conditions.
+World::StartCellSearch World::beginStartCellSearch()
+{
+    const double angle = rand() * TwoPi / (double)RAND_MAX;
+    const int distance = rand() % 100000 + 100000;
+    return {(int)(cos(angle) * distance), (int)(sin(angle) * distance)};
+}
+
 // A start site: a block 8 and 40 blocks into the cell, on dry land (no river, lava or poison channel above 0.4), in a
 // plain biome and on level ground (height steps under 4 over 8 blocks).
+std::optional<plasma::Vector<2, int>> World::probeStartCell(StartCellSearch &search)
+{
+    const auto cell = siteInZone(++search.zoneX, search.zoneY);
+    if (zoneBuildingType(cell[0], cell[1]) != BuildingShrineOfLife)
+        return std::nullopt;
+    plasma::Vector<2, int> position = BlocksPerCell * cell;
+    int x = position[0] + 8;
+    int y = position[1] + 40;
+
+    if (height(x, y, 0) < 0.0f)
+        return std::nullopt;
+    plasma::Vector<2, int> region = findRegion(x, y);
+    int biome = landBiome(region[0], region[1]);
+    if (biome != BiomeHills && biome != BiomeMountains && biome != BiomePlains)
+        return std::nullopt;
+    BiomeSample sample;
+    biomeSample(x, y, sample);
+    AreaInfo info;
+    fillAreaInfo(x, y, info);
+    if (info.type != PlaceVillage)
+        return std::nullopt;
+    // In a village, on plain land: no lava, undead land, mountains, desert, valley, strata or peak, and nearly
+    // level ground.
+    float lava = sample.lavaWeight(PlaceVillage, info.influence);
+    if (lava > 0.0f)
+        return std::nullopt;
+    float undead = sample.undead(PlaceVillage, info.influence);
+    if (undead > 0.0f)
+        return std::nullopt;
+    float mountains = sample.mountains();
+    if (mountains > 0.0f)
+        return std::nullopt;
+    if (sample.desertness() > 0.0f)
+        return std::nullopt;
+    float wetness = sample.wetness();
+    float road = streetAmount(x, y, 5, info.influence);
+    if (valleyWater(x, y, road, lava, undead, wetness, mountains, &info) > 0.4f)
+        return std::nullopt;
+    if (lavaChannels(x, y, road, lava, mountains, &info) > 0.4f)
+        return std::nullopt;
+    if (poisonChannels(x, y, road, undead, mountains, &info) > 0.4f)
+        return std::nullopt;
+    if (fabsf(height(x - 8, y, 0) - height(x + 8, y, 0)) > 4.0f)
+        return std::nullopt;
+    if (fabsf(height(x, y - 8, 0) - height(x, y + 8, 0)) > 4.0f)
+        return std::nullopt;
+    // Not the place of the region's first mission.
+    int placeX = floorDivide(x, BlocksPerPlace);
+    int placeY = floorDivide(y, BlocksPerPlace);
+    if (info.large) {
+        placeX = floorDivide(placeX, 2) * 2;
+        placeY = floorDivide(placeY, 2) * 2;
+    }
+    Missions missions(this, region);
+    plasma::Vector<2, int> village = missions.m_village;
+    if (village == plasma::Vector<2, int>(placeX, placeY))
+        return std::nullopt;
+    return cell;
+}
+
 plasma::Vector<2, int> World::randomStartCell()
 {
-    // From a random point 100,000 to 200,000 zones out, eastwards zone by zone until a site satisfies every condition
-    // below.
-    double angle = rand() * TwoPi / (double)RAND_MAX;
-    int distance = rand() % 100000 + 100000;
-    int zoneX = (int)(cos(angle) * distance);
-    int zoneY = (int)(sin(angle) * distance);
+    auto search = beginStartCellSearch();
     for (;;) {
-        ++zoneX;
-        plasma::Vector<2, int> cell = siteInZone(zoneX, zoneY);
-        if (zoneBuildingType(cell[0], cell[1]) != BuildingShrineOfLife)
-            continue;
-        plasma::Vector<2, int> position = BlocksPerCell * cell;
-        int x = position[0] + 8;
-        int y = position[1] + 40;
-
-        if (height(x, y, 0) < 0.0f)
-            continue;
-        plasma::Vector<2, int> region = findRegion(x, y);
-        int biome = landBiome(region[0], region[1]);
-        if (biome != BiomeHills && biome != BiomeMountains && biome != BiomePlains)
-            continue;
-        BiomeSample sample;
-        biomeSample(x, y, sample);
-        AreaInfo info;
-        fillAreaInfo(x, y, info);
-        if (info.type != PlaceVillage)
-            continue;
-        // In a village, on plain land: no lava, undead land, mountains, desert, valley, strata or peak, and nearly
-        // level ground.
-        float lava = sample.lavaWeight(PlaceVillage, info.influence);
-        if (lava > 0.0f)
-            continue;
-        float undead = sample.undead(PlaceVillage, info.influence);
-        if (undead > 0.0f)
-            continue;
-        float mountains = sample.mountains();
-        if (mountains > 0.0f)
-            continue;
-        if (sample.desertness() > 0.0f)
-            continue;
-        float wetness = sample.wetness();
-        float road = streetAmount(x, y, 5, info.influence);
-        if (valleyWater(x, y, road, lava, undead, wetness, mountains, &info) > 0.4f)
-            continue;
-        if (lavaChannels(x, y, road, lava, mountains, &info) > 0.4f)
-            continue;
-        if (poisonChannels(x, y, road, undead, mountains, &info) > 0.4f)
-            continue;
-        if (fabsf(height(x - 8, y, 0) - height(x + 8, y, 0)) > 4.0f)
-            continue;
-        if (fabsf(height(x, y - 8, 0) - height(x, y + 8, 0)) > 4.0f)
-            continue;
-        // Not the place of the region's first mission.
-        int placeX = floorDivide(x, BlocksPerPlace);
-        int placeY = floorDivide(y, BlocksPerPlace);
-        if (info.large) {
-            placeX = floorDivide(placeX, 2) * 2;
-            placeY = floorDivide(placeY, 2) * 2;
-        }
-        Missions missions(this, region);
-        plasma::Vector<2, int> village = missions.m_village;
-        if (village == plasma::Vector<2, int>(placeX, placeY))
-            continue;
-        return cell;
+        if (const auto cell = probeStartCell(search))
+            return *cell;
     }
 }
 
@@ -8528,7 +8628,7 @@ void World::moveCreature(Creature *creature, float milliseconds)
             long long mount = creature->m_petId;
             if (creatureByID(mount) && creatureByID(mount)->m_entityData.hp > 0.0f &&
                 isPet(creatureByID(mount)->m_entityData.race) && !(creature->m_entityData.flags & CreatureFlagInWater))
-                speed *= RidePetSpeedFactor;
+                speed *= RidePetSpeedFactor * (1.0f + creature->ridingLevel() * Creature::TravelSkillBonus);
         }
     }
     if (creature->m_entityData.currentAbility == AbilityHangGlide) {
@@ -8856,8 +8956,31 @@ void World::moveCreature(Creature *creature, float milliseconds)
     if (creature->isWraithTargeting())
         speed = 10.0f;
     if (creature->m_entityData.currentAbility == AbilityClimb) {
-        speed *= 0.5f;
+        // A player climbs at climbingSpeed: half speed, raised by climbing artifacts and the climbing level, as the
+        // character panel shows. Other creatures keep half speed.
+        speed *= creature->m_entityData.hostilityType == HostilityPlayer ? creature->climbingSpeed() : 0.5f;
         creature->m_entityData.retreat = plasma::Vector<3, float>(0.0f, 0.0f, 0.0f);
+    }
+    // Time spent swimming or climbing (while moving) raises those levels.
+    if (creature == m_localCreature && creature->m_playerData && creature->m_entityData.hp > 0.0f &&
+        creature->m_entityData.acceleration.squaredLength() > 0.0f) {
+        const auto flags = creature->m_entityData.flags;
+        const auto ability = creature->m_entityData.currentAbility;
+        if (ability == AbilityClimb && (flags & CreatureFlagAtWall))
+            creature->m_playerData->climbingSeconds += seconds;
+        else if ((flags & CreatureFlagInWater) && !(flags & CreatureFlagOnGround) && ability != AbilitySailBoat)
+            creature->m_playerData->swimmingSeconds += seconds;
+        else if (ability == AbilityRidePet)
+            creature->m_playerData->ridingSeconds += seconds;
+        else if ((flags & CreatureFlagOnGround) && ability != AbilitySailBoat) {
+            // Walking with a pet out trains riding at half the rate, so the reins can be earned.
+            const Creature *pet = creatureByID(creature->m_petId);
+            if (pet && pet->m_entityData.hp > 0.0f) {
+                const plasma::Vector<3, float> apart(pet->m_entityData.position - creature->m_entityData.position);
+                if (apart.squaredLength() < 30.0f * 30.0f)
+                    creature->m_playerData->ridingSeconds += seconds * 0.5f;
+            }
+        }
     }
     // The time in the air with the glider.
     if (creature->m_entityData.currentAbility == AbilityHangGlide &&
@@ -15674,6 +15797,7 @@ void World::updateStep(float milliseconds)
             updateProgressionLevels();
         updateTerritory(milliseconds);
         updateTravelParties(milliseconds);
+        updateEncounters(milliseconds);
         despawnFarCreatures();
         despawnDeadCreatures(milliseconds);
     }

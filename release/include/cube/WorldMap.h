@@ -6,6 +6,8 @@
 #include <array>
 #include <list>
 #include <map>
+#include <memory>
+#include <mutex>
 #include <vector>
 #include "plasma/Matrix.h"
 #include "plasma/Vector.h"
@@ -102,8 +104,7 @@ public:
     void cleanUp();
     // Deletes every region (under the regions lock for the map itself).
     void clear();
-    void enter();
-    void leave();
+    std::unique_lock<std::mutex> lockRegions() { return std::unique_lock<std::mutex>(m_regionsMutex); }
     // Draws the map: sets the projection (a 45 degree perspective, mirrored in x, shifted so that the window pixel
     // (cursorX, cursorY) is at the centre of projection) and the view (300 units back, scaled by viewScaleFactor,
     // turned by angles[0] about x and angles[2] about z), then fills batch with the regions of the zoom level within
@@ -124,14 +125,11 @@ public:
     bool isMarked(Creature *creature);
     bool update(const plasma::Vector<3, Fixed> &position, int level);
 
-    // The region at (x, y) of the zoom level, or 0.
-    WorldMapRegion *region(int x, int y, int level)
+    // Hold the regions lock while using a returned region.
+    WorldMapRegion *region(int x, int y, int level) const
     {
-        std::array<int, 3> key = {x, y, level};
-        std::map<std::array<int, 3>, WorldMapRegion *>::iterator it = m_regions.find(key);
-        if (it == m_regions.end())
-            return nullptr;
-        return it->second;
+        const auto it = m_regions.find({x, y, level});
+        return it != m_regions.end() ? it->second.get() : nullptr;
     }
 
     Creature *lookupCreature(long long id)
@@ -164,11 +162,13 @@ public:
     int m_totalGenerationTime;
     // Opaque element storage.
     std::vector<WorldMapZoom> m_levels;
-    std::map<std::array<int, 3>, WorldMapRegion *> m_regions;
     int m_frameCounter; // 0 after construction; counts the render calls and stamps the regions drawn
     int m_regionRadius;
-    CRITICAL_SECTION m_regionsCriticalSection;
     CRITICAL_SECTION m_unusedLock; // Initialised by the constructor and deleted by ~WorldMap; never entered.
+
+private:
+    std::mutex m_regionsMutex;
+    std::map<std::array<int, 3>, std::unique_ptr<WorldMapRegion>> m_regions;
 };
 
 // A terrain colour faded towards a tint by height: the nearer z is to lowest (as a fraction of the way to highest),

@@ -116,6 +116,9 @@ protected:
     ScalableGlyphMap *m_strokeGlyphs;        // zeroed by the constructor
     ScalableGlyphMap m_plasmaGlyphs;         // Glyph cache searched by getGlyph and destroyed with the font.
     FT_Face m_face;
+#ifdef __ANDROID__
+    std::vector<unsigned char> m_gameFontBytes; // FreeType keeps these bytes until the face is closed.
+#endif
     FT_Stroker m_stroker;
     float m_width;              // setSize
     float m_height;             // setSize

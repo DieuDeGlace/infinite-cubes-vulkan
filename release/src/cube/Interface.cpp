@@ -17,6 +17,7 @@
 #include "cube/widgets/CharacterPreviewWidget.h"
 #include "cube/widgets/CharacterStyleWidget.h"
 #include "cube/widgets/CharacterWidget.h"
+#include "cube/widgets/TravelSkillBarWidget.h"
 #include "cube/widgets/ChatWidget.h"
 #include "cube/widgets/ControlsWidget.h"
 #include "cube/Creature.h"
@@ -581,6 +582,9 @@ void Interface::load(const std::vector<ResolutionInfo> *displayModes)
 
     m_inGame.m_characterWidget =
         new CharacterWidget(m_game, m_game->m_engine->createNode(nullptr, nullptr, nullptr, m_inGame.m_node));
+    m_inGame.m_travelSkillBars =
+        new TravelSkillBarWidget(m_game, m_game->m_engine->createNode(nullptr, nullptr, nullptr, m_inGame.m_node));
+    m_inGame.m_travelSkillBars->getNode()->setIgnoresPointer(true);
     m_inGame.m_formulaDetailsWidget =
         new FormulaDetailsWidget(m_game, m_blackWidget->instance(m_inGame.m_node), gui->findNode(L"itemshadow"),
                                  gui->findNode(L"craftbutton"), gui->findNode(L"craftbar"));
@@ -939,6 +943,7 @@ void Interface::updateResolution(int width, int height)
     m_inGame.m_infoTextLarge->setPosition((float)width, 0.0f, -120.0f, 60.0f);
     m_inGame.m_infoTextMedium->setPosition((float)width, 0.0f, -120.0f, 100.0f);
     m_inGame.m_townQuestTracker->setPosition(0.0f, 0.0f, 24.0f, 108.0f);
+    m_inGame.m_travelSkillBars->getNode()->setPosition(0.0f, 0.0f, 24.0f, 84.0f);
     m_inGame.m_location->setPosition((float)(width / 2), (float)(height / 3), 0.0f, 0.0f);
     m_inGame.m_crosshair->setPosition((float)(width / 2), (float)(height / 2), 0.0f, 0.0f);
     m_inGame.m_zoomCrosshair->setPosition((float)(width / 2), (float)(height / 2), 0.0f, 0.0f);
@@ -1196,10 +1201,11 @@ void Interface::update(float step)
             m_characterSelection.m_editCharacterButton->setVisible(false);
             m_characterSelection.m_deleteCharacterButton->setVisible(false);
         }
-        if (m_selectedCharacter >= (int)m_game->m_savedCharacters.size()) {
+        const bool findingStart = m_game->findingCharacterStart();
+        if (m_selectedCharacter >= (int)m_game->m_savedCharacters.size() || findingStart) {
             m_characterSelection.m_deleteCharacterButton->setVisible(false);
             m_characterSelection.m_editCharacterButton->setVisible(false);
-            m_characterSelection.m_selectCharacterButton->setText(L"Create");
+            m_characterSelection.m_selectCharacterButton->setText(findingStart ? L"Finding village..." : L"Create");
         } else {
             m_characterSelection.m_selectCharacterButton->setText(L"Select");
         }
@@ -1599,6 +1605,16 @@ void Interface::update(float step)
         m_inGame.m_townQuestText = std::move(questText);
     }
     m_inGame.m_townQuestTracker->setVisible(!m_inGame.m_townQuestText.empty() && !m_mapOpen && !m_inGame.m_menuOpen);
+    // Below the coin, top to bottom: the buff icons (row y 120, 3x scale; the mana pump's mana absorption among
+    // them), the travel-skill bars, then the request tracker. Without buffs the bars take the space under the coin.
+    constexpr float BelowCoin = 84.0f, BelowAuras = 176.0f;
+    const int skillRows = m_inGame.m_travelSkillBars->visibleRows();
+    const float barsTop = m_inGame.m_auraCount > 0 ? BelowAuras : BelowCoin;
+    m_inGame.m_travelSkillBars->getNode()->setPosition(0.0f, 0.0f, 24.0f, barsTop);
+    m_inGame.m_travelSkillBars->getNode()->setVisible(skillRows > 0 && !m_mapOpen && !m_inGame.m_menuOpen);
+    const float trackerTop = m_inGame.m_auraCount > 0 ? BelowAuras : 108.0f;
+    m_inGame.m_townQuestTracker->setPosition(
+        0.0f, 0.0f, 24.0f, skillRows > 0 ? barsTop + skillRows * TravelSkillBarWidget::RowHeight + 4.0f : trackerTop);
     m_game->m_engine->advance((int)step);
 }
 
@@ -1610,11 +1626,13 @@ void Interface::updateAuras()
         m_auraIcons[type];
     }
     int x = -5;
+    m_inGame.m_auraCount = 0;
     for (const Creature::Buff &buff : m_game->m_world->m_localCreature->m_buffs) {
         int type = buff.type;
         plasma::Node *icon = m_auraIcons[type];
         if (icon) {
             x += 50;
+            ++m_inGame.m_auraCount;
             plasma::Node *instance = icon->instance(m_inGame.m_auraBar);
             instance->makeTransformationUnique();
             instance->m_transformation->m_deformation.value().scale(3.0f, 3.0f);
@@ -1649,7 +1667,7 @@ void Interface::updateSlots()
     m_characterSelection.m_previewWidgets.clear();
     for (int i = 0; i < (int)m_game->m_savedCharacters.size() + 1; i++) {
         Creature *creature = nullptr;
-        if (i < (int)m_game->m_savedCharacters.size())
+        if (i < (int)m_game->m_savedCharacters.size() && m_game->m_savedCharacters[i]->m_playerData)
             creature = m_game->m_savedCharacters[i];
         CharacterPreviewWidget *widget =
             new CharacterPreviewWidget(m_game, m_blackWidget->instance(m_characterSelection.m_node));

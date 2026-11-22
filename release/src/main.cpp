@@ -397,6 +397,9 @@ static int runGame(HINSTANCE programInstance, int showCommand)
                 auto world =
                     std::make_unique<cube::World>(spriteManager.get(), alphaTerrain, s_options.largerBiomes != 0,
                                                   s_options.pyroProgression != 0, s_options.aquaticEnemies != 0);
+                world->m_travelDungeons = s_options.travelDungeons != 0;
+                cube::Item::s_travelGearAnywhere = world->m_travelDungeons;
+                world->m_spawnDensity = std::clamp(s_options.spawnDensity, 50, 400);
                 std::filesystem::create_directories(world->saveDirectory());
                 s_startupLog << "create world map" << std::endl;
                 auto worldMap = std::make_unique<cube::WorldMap>(world.get(), engine);
