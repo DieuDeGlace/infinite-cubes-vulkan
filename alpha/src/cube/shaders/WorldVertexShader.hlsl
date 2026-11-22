@@ -1,3 +1,20 @@
+[[vk::binding(0, 0)]] cbuffer Constants {
+    float4 pointLightPositions[10] : packoffset(c0);
+    float3 pointLightColors[10] : packoffset(c10);
+    float4x4 worldViewProjMatrix : packoffset(c20);
+    float4x3 worldViewMatrix : packoffset(c24);
+    float4x3 worldMatrix : packoffset(c27);
+    float fogScale : packoffset(c30);
+    float fogGradientTranslation : packoffset(c31);
+    float4 materialColor : packoffset(c32);
+    float3 lightDirection : packoffset(c33);
+    float4 lightFrontColor : packoffset(c34);
+    float4 lightBackColor : packoffset(c35);
+    float3 cameraPosition : packoffset(c36);
+    float4 darknessColor : packoffset(c37);
+    float4 ambientColor : packoffset(c38);
+    float white : packoffset(c39);
+};
 // CubeShader's vertex shader (m_vertexShader), used with every pixel shader. Input: CubeShader's
 // vertex declaration, a UBYTE4 position whose fourth byte names the face (0..5: +x, -x, +y, -y,
 // +z, -z) and a D3DCOLOR. It lights the vertex (the directional light from both sides, the ambient
@@ -7,33 +24,19 @@
 // white 39); the C++ uploads ten of each light array. A point light
 // counts four times its incidence, between 0.3 and 1; the lighting is capped at 1.2; the
 // view-space normal passed on is doubled.
-float4 pointLightPositions[16];
-float3 pointLightColors[16];
-float4x4 worldViewProjMatrix;
-float4x4 worldViewMatrix;
-float4x4 worldMatrix;
-float fogScale;
-float fogGradientTranslation;
-float4 materialColor;
-float3 lightDirection;
-float4 lightFrontColor;
-float4 lightBackColor;
-float3 cameraPosition;
-float4 darknessColor;
-float4 ambientColor;
-float white;
 
 struct Output {
-    float4 position : POSITION;
-    float4 color : COLOR0;
-    float4 fog : TEXCOORD0;
-    float3 normal : TEXCOORD1;
-    float3 lightDirection : TEXCOORD2;
-    float3 cameraDirection : TEXCOORD3;
+    float4 position : SV_Position;
+    [[vk::location(0)]] float4 color : COLOR0;
+    [[vk::location(1)]] float4 fog : TEXCOORD0;
+    [[vk::location(2)]] float3 normal : TEXCOORD1;
+    [[vk::location(3)]] float3 lightDirection : TEXCOORD2;
+    [[vk::location(4)]] float3 cameraDirection : TEXCOORD3;
 };
 
-Output main(float4 position : POSITION, float4 color : COLOR0)
+Output main([[vk::location(0)]] uint4 position : POSITION, [[vk::location(1)]] float4 color : COLOR0)
 {
+    color = color.bgra;
     Output output;
     float3 normal;
     if (position.w == 0)

@@ -1,6 +1,7 @@
 #include "cube/WorldDimensions.h"
 // GameController manages the game client, rendering chunks and saved-world previews.
 #include "cube/GameController.h"
+#include "cube/TownQuest.h"
 #include "cube/WorldBlocks.h"
 #include <fstream>
 #include <iostream>
@@ -255,7 +256,7 @@ Chunk::Chunk()
 static plasma::SmoothMeshShape *smoothMeshShape(plasma::Shape *shape);
 static plasma::TextShape *textShape(plasma::Shape *shape);
 
-GameController::GameController(IDirect3DDevice9 *device, CubeShader *shader, plasma::Engine *engine, Audio *audio,
+GameController::GameController(AlphaRenderDevice *device, CubeShader *shader, plasma::Engine *engine, Audio *audio,
                                Options *options, std::vector<plasma::Vector<2, int>> *resolutions, bool server,
                                const std::string &serverAddress)
     : Controller(device),
@@ -515,6 +516,8 @@ GameController::GameController(IDirect3DDevice9 *device, CubeShader *shader, pla
     m_helpNode->setVisible(false);
     m_questTag = m_gameScreen->findNode(L"questtag");
     m_smallQuestTag = m_gameScreen->findNode(L"smallquesttag");
+    m_townQuestTag = m_smallQuestTag->clone(m_gameScreen);
+    m_townQuestTag->setVisible(false);
     m_engine->readPlasmaFileIntoNode(L"start.plx", m_startScreen, (1 << plasma::LOAD_HINTED_TEXT), 0, keys);
     m_cubeWorldLogo = m_startScreen->findNode(L"cubeworld");
     m_picromaLogo = m_startScreen->findNode(L"picroma");
@@ -2083,6 +2086,8 @@ void GameController::changeWorld(int seed, const std::string &name)
     m_player->m_playerData->lastWorld = std::make_pair(seed, name);
     m_seed = seed;
     m_worldName = name;
+    m_worldMap.m_townQuestMarkers.clear();
+    m_townQuestSearchDelay = 0;
     std::list<std::map<long long, Creature *>::iterator> others;
     for (std::map<long long, Creature *>::iterator it = m_world.m_creatures.begin(); it != m_world.m_creatures.end();
          ++it) {
@@ -4929,6 +4934,7 @@ void GameController::loadCharacter(int index, Creature *creature)
     if (m_charactersDatabase.read(key.str(), bytes)) {
         bytes.decompress();
         Serializer(&bytes).loadCreature(creature);
+        loadTownQuests(bytes, creature->m_playerData->townQuests);
         creature->m_entityData.position = position;
         creature->m_drawnPosition = creature->m_entityData.position;
         creature->m_shownXp = creature->m_entityData.xp;
@@ -5629,6 +5635,7 @@ void GameController::saveCharacter(int index, Creature *creature)
     m_world.leaveRegions();
     BytesIO bytes;
     Serializer(&bytes).saveCreature(saved);
+    saveTownQuests(bytes, saved->m_playerData->townQuests);
     delete saved;
     std::stringstream key;
     key << index;
@@ -5748,48 +5755,6 @@ void GameController::talkTo(Creature *creature, bool restart)
 {
     if (!creature)
         return;
-    if (creature->m_entityData.appearance.appearanceFlags & (1 << AppearanceFlagHasDialog)) {
-        SpeechWidget *widget = 0;
-        for (std::vector<SpeechWidget *>::iterator it = m_speechWidgets.begin(); it != m_speechWidgets.end(); ++it) {
-            if ((*it)->m_creature == creature) {
-                widget = *it;
-                break;
-            }
-        }
-        if (widget) {
-            if (!restart) {
-                if (widget->isDialogFinished()) {
-                    widget->m_dialogIndex++;
-                    widget->m_readTime = 0;
-                    widget->m_textUncovered = 0;
-                } else {
-                    widget->m_readTime = widget->getDialogDuration();
-                }
-                return;
-            }
-        } else {
-            for (int i = 0; i < (int)m_speechWidgets.size(); i++) {
-                if (m_speechWidgets[i]->m_creature == 0)
-                    widget = m_speechWidgets[i];
-            }
-            if (!widget)
-                return;
-        }
-        std::vector<Dialog> dialogs;
-        Region *region = m_world.getRegion(creature->m_entityData.spawnSlot[0] / ZonesPerRegion,
-                                           creature->m_entityData.spawnSlot[1] / ZonesPerRegion);
-        if (!region)
-            return;
-        for (int i = 0; i < 8; i++) {
-            for (int j = 0; j < 8; j++) {
-                Region::Record &record = region->m_records[i * 8 + j];
-                if (record.kind != Region::Record::SceneryNone && record.level <= m_player->m_entityData.level + 2)
-                    m_worldMap.discover((int)record.center[0] / BlocksPerZone, (int)record.center[1] / BlocksPerZone);
-            }
-        }
-        return;
-    }
-
     SpeechWidget *widget = 0;
     for (std::vector<SpeechWidget *>::iterator it = m_speechWidgets.begin(); it != m_speechWidgets.end(); ++it) {
         if ((*it)->m_creature == creature) {
@@ -5816,6 +5781,21 @@ void GameController::talkTo(Creature *creature, bool restart)
         if (!widget)
             return;
     }
+    if (creature->m_entityData.appearance.appearanceFlags & (1 << AppearanceFlagHasDialog)) {
+        Region *region = m_world.getRegion(creature->m_entityData.spawnSlot[0] / ZonesPerRegion,
+                                           creature->m_entityData.spawnSlot[1] / ZonesPerRegion);
+        if (!region)
+            return;
+        for (int i = 0; i < 8; i++) {
+            for (int j = 0; j < 8; j++) {
+                Region::Record &record = region->m_records[i * 8 + j];
+                if (record.kind != Region::Record::SceneryNone && record.level <= m_player->m_entityData.level + 2)
+                    m_worldMap.discover((int)record.center[0] / BlocksPerZone, (int)record.center[1] / BlocksPerZone);
+            }
+        }
+        if (!hasTownQuest(*creature) && !isTownQuestGiver(m_world, *creature))
+            return;
+    }
     std::vector<Dialog> dialogs;
     plasma::Vector<3, int> location = creature->m_entityData.questZone;
     Region::Record *record =
@@ -5826,7 +5806,9 @@ void GameController::talkTo(Creature *creature, bool restart)
         location[1] = -1;
     }
     location[2] = (int)creature->m_id;
-    if (creature->m_entityData.classType == ClassInnkeeper) {
+    if (talkAboutTownQuest(*creature, dialogs)) {
+        // Quest text is displayed by the same speech widget below.
+    } else if (creature->m_entityData.classType == ClassInnkeeper) {
         Speech::Context context;
         m_world.m_speech.generateDialogs(L"innkeeper", &context, dialogs);
     } else {
@@ -7185,13 +7167,19 @@ void GameController::update(int milliseconds)
         }
     }
 
+    bool townQuestsChanged = updateTownQuests(milliseconds);
     // Kills.
     if (!m_serverUpdates.kills.empty()) {
         for (std::list<KillPacket>::iterator it = m_serverUpdates.kills.begin(); it != m_serverUpdates.kills.end();
-             it++)
+             it++) {
+            townQuestsChanged |= recordTownQuestKill(*it);
             m_world.onKill(*it);
+        }
         updates.kills.insert(updates.kills.end(), m_serverUpdates.kills.begin(), m_serverUpdates.kills.end());
     }
+
+    if (townQuestsChanged && m_selectedCharacter >= 0)
+        saveCharacter(m_selectedCharacter, m_player);
 
     // Aggro between two other creatures.
     if (!m_serverUpdates.aggro.empty()) {
@@ -7362,6 +7350,17 @@ void GameController::update(int milliseconds)
     plasma::Vector<3, float> cursorRay = m_cameraMatrix.transformDirection(plasma::Vector<3, float>(0.0f, 0.0f, 1.0f));
     cursorRay.normalize();
     m_questTag->setVisible(m_questTag->isPlaying());
+    if (townQuestsChanged || m_townQuestSearchDelay == 500) {
+        const auto summary = townQuestSummary();
+        if (summary != m_lastTownQuestSummary) {
+            m_lastTownQuestSummary = summary;
+            m_townQuestTag->setText(L"objective", summary, true);
+        }
+    }
+    const bool showTownQuest = !m_lastTownQuestSummary.empty() && !m_smallQuestTag->isVisible();
+    if (showTownQuest && !m_townQuestTag->isVisible())
+        m_townQuestTag->play(L"show", 0);
+    m_townQuestTag->setVisible(showTownQuest);
 
     // The experience bar: "xp/next" and the fill.
     if (m_experienceBar) {
@@ -9922,9 +9921,9 @@ void GameController::updateChunk(int x, int y)
     plasma::Vector<3, Fixed> boundsMax(Fixed(x0 + BlocksPerChunk + 1), Fixed(y0 + BlocksPerChunk + 1), Fixed(maxZ + 1));
 
     // The Direct3D buffers of each slice.
-    std::vector<IDirect3DVertexBuffer9 *> vertexBuffers(slices, (IDirect3DVertexBuffer9 *)0);
-    std::vector<IDirect3DIndexBuffer9 *> solidBuffers(slices, (IDirect3DIndexBuffer9 *)0);
-    std::vector<IDirect3DIndexBuffer9 *> waterBuffers(slices, (IDirect3DIndexBuffer9 *)0);
+    std::vector<AlphaBuffer *> vertexBuffers(slices, (AlphaBuffer *)0);
+    std::vector<AlphaBuffer *> solidBuffers(slices, (AlphaBuffer *)0);
+    std::vector<AlphaBuffer *> waterBuffers(slices, (AlphaBuffer *)0);
     for (int i = 0; i < slices; i++) {
         if (!vertices[i].empty()) {
             m_device->CreateVertexBuffer((UINT)(vertices[i].size() * sizeof(Vertex)), D3DUSAGE_WRITEONLY, 0,
@@ -10543,6 +10542,10 @@ void GameController::resize(int width, int height)
             plasma::Vector<2, float>((float)(m_windowWidth - 200), 400.0f) -
             m_smallQuestTag->transformation()->m_pivot.value();
         m_smallQuestTag->transformation()->attributesChanged(plasma::ATTRIBUTES_CHANGED_ALL);
+        if (m_townQuestTag) {
+            m_townQuestTag->transformation()->m_translation = m_smallQuestTag->transformation()->m_translation.value();
+            m_townQuestTag->transformation()->attributesChanged(plasma::ATTRIBUTES_CHANGED_ALL);
+        }
     }
     if (m_cubeWorldLogo) {
         m_cubeWorldLogo->transformation()->m_translation =

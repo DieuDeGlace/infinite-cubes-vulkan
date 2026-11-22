@@ -107,7 +107,7 @@ public:
 
     // Builds the members, sets up the world with seed 123 and no name, fills the key tables and their
     // reverse tables, loads the building models and places the spawn point. The flag is m_client.
-    World(IDirect3DDevice9 *device, bool client);
+    World(AlphaRenderDevice *device, bool client);
     virtual ~World();
 
     // Returns the region at region coordinates, or null when unloaded. A region spans 64 by 64 zones.

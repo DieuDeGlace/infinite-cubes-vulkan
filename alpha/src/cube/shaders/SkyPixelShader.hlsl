@@ -4,7 +4,7 @@
 // numbers: the gradient at 0.6 of the height, the horizon band at twice it, 0.2 sky and 0.8 fog).
 #include "World.hlsli"
 
-float4 main(PixelInput input) : COLOR0
+float4 main(PixelInput input) : SV_Target
 {
     float height = input.fog.y;
     float3 sky = lerp(skyColor1.rgb, skyColor2.rgb, smoothCurve(saturate(0.6 * height)));

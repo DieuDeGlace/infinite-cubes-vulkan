@@ -104,7 +104,7 @@ void GameController::render()
     m_device->SetRenderState(D3DRS_ZENABLE, TRUE);
     m_device->SetRenderState(D3DRS_ZFUNC, D3DCMP_LESSEQUAL);
     m_world.enterRegions();
-    m_device->BeginScene();
+
 
     std::vector<Chunk *> visibleChunks;
     std::vector<FrameLight> lights;
@@ -244,15 +244,15 @@ void GameController::render()
         m_characterListScreen->setVisible(characterListScreenVisible);
         m_worldListScreen->setVisible(worldListScreenVisible);
         m_worldCreationScreen->setVisible(worldCreationScreenVisible);
-        m_device->EndScene();
+
         m_world.leaveRegions();
         return;
     }
 
     // The sky and the light: bluish under water.
     plasma::Vector<4, float> tint(1.0f, 1.0f, 1.0f, daylight);
-    bool underwater =
-        m_world.getBlock(m_cameraPosition[0], m_cameraPosition[1], m_cameraPosition[2], 0).type == BlockWater;
+    const Block &cameraBlock = m_world.getBlock(m_cameraPosition[0], m_cameraPosition[1], m_cameraPosition[2], 0);
+    const bool underwater = (cameraBlock.type & BlockTypeMask) == BlockWater;
     if (underwater)
         tint = plasma::Vector<4, float>(0.4f, 0.5f, 1.0f, daylight);
     m_shader->setWhite(0.0f);
@@ -342,7 +342,7 @@ void GameController::render()
         m_gameScreen->setVisible(false);
         m_mapScreen->setVisible(true);
         m_engine->drawWindow();
-        m_device->EndScene();
+
         m_world.leaveRegions();
         return;
     }
@@ -2262,6 +2262,7 @@ void GameController::render()
 
     // The water faces of the chunks, farthest first.
     m_shader->setAlpha(1.0f);
+    bool haveWaterBackground = false;
     m_shader->applyWater();
     m_device->SetRenderState(D3DRS_ZENABLE, TRUE);
     m_device->SetRenderState(D3DRS_ZWRITEENABLE, TRUE);
@@ -2274,6 +2275,11 @@ void GameController::render()
              buffer != chunk->chunkBuffers.end(); buffer++) {
             if (!(*buffer)->waterIndexBuffer)
                 continue;
+            if (!haveWaterBackground) {
+                m_device->snapshotWater(toBlocks(m_drawOriginX), toBlocks(m_drawOriginY), 0.2f + 0.8f * daylight,
+                                        underwater, m_projectionMatrix[10], m_projectionMatrix[14]);
+                haveWaterBackground = true;
+            }
             plasma::Matrix<float> waterModel;
             waterModel.identity();
             waterModel.translate((float)(Fixed(chunk->position[0] << 5) + m_drawOriginX),
@@ -2342,6 +2348,9 @@ void GameController::render()
 
     // The interface: the minimap and the ring menu under the game screen's nodes, then the nodes, then
     // the portraits over them.
+    if (m_gameScreen->isVisible() && !m_startScreen->isVisible())
+        m_device->drawQuestMarkers(m_worldMap.m_townQuestMarkers, {float(-m_drawOriginX), float(-m_drawOriginY), 0},
+                                   view, m_projectionMatrix, false);
     m_minimapNode->destroyChildren();
     m_device->Clear(0, 0, D3DCLEAR_ZBUFFER, 0xffffffff, 1.0f, 0);
     if (m_gameScreen->isVisible() && m_engine->root()->isVisible()) {
@@ -2472,7 +2481,6 @@ void GameController::render()
         m_previewRotation[2] += m_frameMilliseconds * 0.002f * 5.0f * 3.0f;
     }
 
-    m_device->EndScene();
     m_world.leaveRegions();
 }
 

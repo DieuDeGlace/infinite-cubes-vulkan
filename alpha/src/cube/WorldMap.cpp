@@ -42,7 +42,7 @@ enum {
 };
 }
 
-WorldMap::WorldMap(IDirect3DDevice9 *device, World *world, CubeShader *shader)
+WorldMap::WorldMap(AlphaRenderDevice *device, World *world, CubeShader *shader)
     : m_hoveredZone(-1, -1),
       m_selectedZone(-1, -1),
       m_canTeleport(false),
@@ -265,8 +265,8 @@ void WorldMap::render(const plasma::Vector<3, Fixed> &center, int centerX, int c
     view.rotateX(rotation[0]);
     view.rotateZ(rotation[2]);
 
-    RECT scissor = {width - MinimapScissorOuterEdge, MinimapScissorOuterEdge, width - MinimapScissorInset,
-                    MinimapScissorInset};
+    RECT scissor = {width - MinimapScissorOuterEdge, MinimapScissorInset, width - MinimapScissorInset,
+                    MinimapScissorOuterEdge};
     m_device->SetScissorRect(&scissor);
     m_device->SetRenderState(D3DRS_ZENABLE, TRUE);
     m_shader->apply();
@@ -698,6 +698,8 @@ void WorldMap::render(const plasma::Vector<3, Fixed> &center, int centerX, int c
             }
         }
     }
+    m_device->drawQuestMarkers(m_townQuestMarkers, plasma::Vector<3,float>(center), m_view, projection, true,
+                              full ? nullptr : &scissor);
 }
 
 void WorldMap::enterRegions()

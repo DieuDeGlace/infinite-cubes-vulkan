@@ -1,9 +1,9 @@
-#include "plasma/D3D9RenderSurface.h"
-#include "plasma/D3D9Engine.h"
+#include "plasma/VulkanRenderSurface.h"
+#include "plasma/VulkanEngine.h"
 
 namespace plasma {
 
-D3D9RenderSurface::D3D9RenderSurface(D3D9Engine *engine, bool depthAttachment)
+VulkanRenderSurface::VulkanRenderSurface(VulkanEngine *engine, bool depthAttachment)
     : RenderSurface(depthAttachment),
       m_engine(engine),
       m_width(0),
@@ -14,7 +14,7 @@ D3D9RenderSurface::D3D9RenderSurface(D3D9Engine *engine, bool depthAttachment)
       m_previousColorSurface(0)
 {}
 
-D3D9RenderSurface::~D3D9RenderSurface()
+VulkanRenderSurface::~VulkanRenderSurface()
 {
     if (m_depthSurface)
         m_depthSurface->Release();
@@ -24,7 +24,7 @@ D3D9RenderSurface::~D3D9RenderSurface()
         m_colorTexture->Release();
 }
 
-void D3D9RenderSurface::bindTexture()
+void VulkanRenderSurface::bindTexture()
 {
     m_engine->m_device->SetTexture(0, m_colorTexture);
     m_engine->m_device->SetSamplerState(0, D3DSAMP_MINFILTER, D3DTEXF_POINT);
@@ -32,7 +32,7 @@ void D3D9RenderSurface::bindTexture()
     m_engine->m_device->SetSamplerState(0, D3DSAMP_MIPFILTER, D3DTEXF_NONE);
 }
 
-void D3D9RenderSurface::clearRect(const Vector<2, float> &position, const Vector<2, float> &size, bool loadIdentity)
+void VulkanRenderSurface::clearRect(const Vector<2, float> &position, const Vector<2, float> &size, bool loadIdentity)
 {
     Matrix<float> projection = m_engine->m_projectionMatrix;
     Vector<2, float> minimum, maximum;
@@ -67,7 +67,7 @@ void D3D9RenderSurface::clearRect(const Vector<2, float> &position, const Vector
     m_engine->m_device->Clear(1, &rectangle, D3DCLEAR_TARGET | D3DCLEAR_ZBUFFER | D3DCLEAR_STENCIL, 0, 0.0f, 0);
 }
 
-void D3D9RenderSurface::clear()
+void VulkanRenderSurface::clear()
 {
     m_engine->m_device->Clear(
         0, 0, D3DCLEAR_TARGET | D3DCLEAR_ZBUFFER | D3DCLEAR_STENCIL,
@@ -76,7 +76,7 @@ void D3D9RenderSurface::clear()
         0.0f, 0);
 }
 
-void D3D9RenderSurface::end()
+void VulkanRenderSurface::end()
 {
     m_engine->m_device->SetRenderTarget(0, m_previousColorSurface);
     m_engine->m_device->SetDepthStencilSurface(m_previousDepthSurface);
@@ -84,7 +84,7 @@ void D3D9RenderSurface::end()
     m_previousDepthSurface->Release();
 }
 
-void D3D9RenderSurface::draw(const Vector<2, float> &position, const Vector<2, float> &size,
+void VulkanRenderSurface::draw(const Vector<2, float> &position, const Vector<2, float> &size,
                              const Vector<2, float> &texturePosition, float scale)
 {
     Matrix<float> saved;
@@ -128,7 +128,7 @@ void D3D9RenderSurface::draw(const Vector<2, float> &position, const Vector<2, f
     m_engine->loadMatrix(saved);
 }
 
-void D3D9RenderSurface::drawBlurred(const Vector<2, float> &position, const Vector<2, float> &size, float radius,
+void VulkanRenderSurface::drawBlurred(const Vector<2, float> &position, const Vector<2, float> &size, float radius,
                                     bool horizontal, float scale)
 {
     Matrix<float> saved;
@@ -181,7 +181,7 @@ void D3D9RenderSurface::drawBlurred(const Vector<2, float> &position, const Vect
     m_engine->loadMatrix(saved);
 }
 
-void D3D9RenderSurface::drawDownsampled(const Vector<2, float> &position, const Vector<2, float> &size,
+void VulkanRenderSurface::drawDownsampled(const Vector<2, float> &position, const Vector<2, float> &size,
                                         const Vector<2, float> &texturePosition, float scale, int factor)
 {
     Matrix<float> saved;
@@ -208,19 +208,17 @@ void D3D9RenderSurface::drawDownsampled(const Vector<2, float> &position, const 
         break;
     case 2:
         m_engine->m_device->SetPixelShader(m_engine->m_downsample2PixelShader);
-        // The code reads the register into the vector (Get, not Set), so the downsampling shader never
-        // receives the texel size.
-        m_engine->m_device->GetPixelShaderConstantF(
+        m_engine->m_device->SetPixelShaderConstantF(
             m_engine->m_downsample2ScaleRegister, &Vector<4, float>(1.0f / m_width, 1.0f / m_height, 0.0f, 0.0f)[0], 1);
         break;
     case 3:
         m_engine->m_device->SetPixelShader(m_engine->m_downsample3PixelShader);
-        m_engine->m_device->GetPixelShaderConstantF(
+        m_engine->m_device->SetPixelShaderConstantF(
             m_engine->m_downsample3ScaleRegister, &Vector<4, float>(1.0f / m_width, 1.0f / m_height, 0.0f, 0.0f)[0], 1);
         break;
     case 4:
         m_engine->m_device->SetPixelShader(m_engine->m_downsample4PixelShader);
-        m_engine->m_device->GetPixelShaderConstantF(
+        m_engine->m_device->SetPixelShaderConstantF(
             m_engine->m_downsample4ScaleRegister, &Vector<4, float>(1.0f / m_width, 1.0f / m_height, 0.0f, 0.0f)[0], 1);
         break;
     }
@@ -231,7 +229,7 @@ void D3D9RenderSurface::drawDownsampled(const Vector<2, float> &position, const 
     m_engine->loadMatrix(saved);
 }
 
-void D3D9RenderSurface::begin()
+void VulkanRenderSurface::begin()
 {
     m_engine->m_device->GetRenderTarget(0, &m_previousColorSurface);
     m_engine->m_device->GetDepthStencilSurface(&m_previousDepthSurface);
@@ -241,7 +239,7 @@ void D3D9RenderSurface::begin()
     }
 }
 
-void D3D9RenderSurface::releaseDeviceResources()
+void VulkanRenderSurface::releaseDeviceResources()
 {
     if (m_depthSurface) {
         m_depthSurface->Release();
@@ -257,7 +255,7 @@ void D3D9RenderSurface::releaseDeviceResources()
     }
 }
 
-bool D3D9RenderSurface::resize(int width, int height)
+bool VulkanRenderSurface::resize(int width, int height)
 {
     if (m_colorTexture && width == m_width && height == m_height)
         return false;

@@ -6,7 +6,7 @@
 // gradient's (0.8, 1, 1).
 #include "World.hlsli"
 
-float4 main(PixelInput input) : COLOR0
+float4 main(PixelInput input) : SV_Target
 {
     float distance = saturate(input.fog.z);
     float3 sky = lerp(skyColor1.rgb, skyColor2.rgb, saturate(input.fog.y));

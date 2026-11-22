@@ -1,6 +1,6 @@
 // SpriteManager loads voxel models and selects models for items and scenery.
 #include "cube/SpriteManager.h"
-#include <d3d9.h>
+#include "gfx/AlphaRenderDevice.h"
 #include "cube/Sprite.h"
 #include "cube/ItemIds.h"
 #include "cube/SpriteIds.h"
@@ -31,7 +31,7 @@ enum {
     SpriteSlotCount = 2569
 };
 
-SpriteManager::SpriteManager(IDirect3DDevice9 *device)
+SpriteManager::SpriteManager(AlphaRenderDevice *device)
     : m_device(device)
 {}
 

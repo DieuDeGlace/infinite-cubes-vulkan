@@ -1,3 +1,14 @@
+[[vk::binding(0, 0)]] cbuffer Constants {
+    float fogScale : packoffset(c30);
+    float3 sceneCamera : packoffset(c36);
+    float4 skyColor1 : packoffset(c40);
+    float4 skyColor2 : packoffset(c41);
+    float4 fogColor : packoffset(c42);
+    float alpha : packoffset(c43);
+    float shininess : packoffset(c44);
+    float4 waterSurface : packoffset(c59);
+    float2 projectionDepth : packoffset(c60);
+};
 // Shared by CubeShader's pixel shaders : their constants, the interpolants the world vertex shader
 // writes, and the curve the sky gradients use. The constant names are  (each shader's
 // CTAB keeps them); the registers follow this declaration order, as CubeShader::initialize sets
@@ -5,21 +16,15 @@
 #ifndef WORLD_HLSLI
 #define WORLD_HLSLI
 
-float4 skyColor1;
-float4 skyColor2;
-float4 fogColor;
-float alpha;
-float shininess;
-
 // WorldVertexShader's outputs but the position.
 struct PixelInput {
-    float4 color : COLOR0;
+    [[vk::location(0)]] float4 color : COLOR0;
     // X, y: the projected position, y raised by fogGradientTranslation (the height on the sky
     // gradient); z: the squared distance to the camera, w: its horizontal part, both times fogScale².
-    float4 fog : TEXCOORD0;
-    float3 normal : TEXCOORD1;          // the view-space normal, doubled
-    float3 lightDirection : TEXCOORD2;  // lightDirection, unchanged
-    float3 cameraDirection : TEXCOORD3; // from the vertex to cameraPosition, world space
+    [[vk::location(1)]] float4 fog : TEXCOORD0;
+    [[vk::location(2)]] float3 normal : TEXCOORD1;          // the view-space normal, doubled
+    [[vk::location(3)]] float3 lightDirection : TEXCOORD2;  // lightDirection, unchanged
+    [[vk::location(4)]] float3 cameraDirection : TEXCOORD3; // from the vertex to cameraPosition, world space
 };
 
 // 3x² - 2x³, smoothstep's curve on [0, 1].

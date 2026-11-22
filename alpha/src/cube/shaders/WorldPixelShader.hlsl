@@ -8,7 +8,7 @@
 // the horizon 0.2 sky, 0.8 fog.
 #include "World.hlsli"
 
-float4 main(PixelInput input) : COLOR0
+float4 main(PixelInput input) : SV_Target
 {
     float height = input.fog.y;
     float skyAmount = saturate((input.fog.w - 0.6) * 2.5);

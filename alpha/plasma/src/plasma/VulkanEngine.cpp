@@ -1,7 +1,7 @@
-#include "plasma/D3D9Engine.h"
-#include "plasma/D3D9Drawing.h"
-#include "plasma/D3D9RenderSurface.h"
-#include "plasma/D3D9Texture.h"
+#include "plasma/VulkanEngine.h"
+#include "plasma/VulkanDrawing.h"
+#include "plasma/VulkanRenderSurface.h"
+#include "plasma/VulkanTexture.h"
 #include "plasma/Node.h"
 #include "plasma/Transformation.h"
 #include "plasma/RenderSurface.h"
@@ -26,22 +26,13 @@ int g_drawingLayer;
 
 namespace {
 // Shader headers are generated from HLSL sources listed in shaders.json.
-#include "plasma/shaders/ShapeVertexShader.h"
-#include "plasma/shaders/ShapePixelShader.h"
-#include "plasma/shaders/SurfaceVertexShader.h"
-#include "plasma/shaders/SurfacePixelShader.h"
-#include "plasma/shaders/Downsample2PixelShader.h"
-#include "plasma/shaders/Downsample3PixelShader.h"
-#include "plasma/shaders/Downsample4PixelShader.h"
-#include "plasma/shaders/VerticalBlurPixelShader.h"
-#include "plasma/shaders/HorizontalBlurPixelShader.h"
 struct ColoredVertex {
     float x, y, z;
     D3DCOLOR color;
 };
 }
 
-D3D9Engine::D3D9Engine(IDirect3DDevice9 *device)
+VulkanEngine::VulkanEngine(AlphaRenderDevice *device)
     : m_shapeVertexShader(0),
       m_shapePixelShader(0),
       m_surfaceVertexShader(0),
@@ -58,7 +49,7 @@ D3D9Engine::D3D9Engine(IDirect3DDevice9 *device)
       m_rectangleIndices(0)
 {}
 
-D3D9Engine::~D3D9Engine()
+VulkanEngine::~VulkanEngine()
 {
     if (m_rectangleVertices)
         m_rectangleVertices->Release();
@@ -84,7 +75,7 @@ D3D9Engine::~D3D9Engine()
         m_verticalBlurPixelShader->Release();
 }
 
-void D3D9Engine::beginWindowDrawing()
+void VulkanEngine::beginWindowDrawing()
 {
     m_modelViewMatrix.identity();
     m_device->SetRenderState(D3DRS_CULLMODE, D3DCULL_NONE);
@@ -107,7 +98,7 @@ void D3D9Engine::beginWindowDrawing()
     g_drawingLayer = 1;
 }
 
-void D3D9Engine::pushNodeMatrix(Node *node)
+void VulkanEngine::pushNodeMatrix(Node *node)
 {
     m_modelViewStack.push_back(m_modelViewMatrix);
     if (m_modelViewStack.empty())
@@ -116,7 +107,7 @@ void D3D9Engine::pushNodeMatrix(Node *node)
         m_modelViewMatrix = m_modelViewStack.back() * node->m_transformation->m_matrix;
 }
 
-void D3D9Engine::beginTextDrawing(Node *node)
+void VulkanEngine::beginTextDrawing(Node *node)
 {
     bool filterSurface = node && m_filterSurface &&
                          (!(node->m_display->m_flags & (1 << DISPLAY_BLUR)) ||
@@ -151,7 +142,7 @@ void D3D9Engine::beginTextDrawing(Node *node)
     m_device->SetVertexShaderConstantF(m_baseColorRegister, &Vector<4, float>(1.0f, 1.0f, 1.0f, 1.0f)[0], 1);
 }
 
-void D3D9Engine::beginSurface(RenderSurface *surface, const Vector<2, float> &position, const Vector<2, float> &size,
+void VulkanEngine::beginSurface(RenderSurface *surface, const Vector<2, float> &position, const Vector<2, float> &size,
                               float scale, bool alignPixels)
 {
     pushSurface(surface);
@@ -186,23 +177,23 @@ void D3D9Engine::beginSurface(RenderSurface *surface, const Vector<2, float> &po
     }
 }
 
-Drawing *D3D9Engine::createDrawing()
+Drawing *VulkanEngine::createDrawing()
 {
-    return new D3D9Drawing(this);
+    return new VulkanDrawing(this);
 }
 
-RenderSurface *D3D9Engine::createRenderSurface(bool depthAttachment)
+RenderSurface *VulkanEngine::createRenderSurface(bool depthAttachment)
 {
-    return new D3D9RenderSurface(this, depthAttachment);
+    return new VulkanRenderSurface(this, depthAttachment);
 }
 
-Texture *D3D9Engine::createTexture(int width, int height, const unsigned char *pixels, const TextureFormat &format,
+Texture *VulkanEngine::createTexture(int width, int height, const unsigned char *pixels, const TextureFormat &format,
                                    const std::wstring &name, bool transient)
 {
-    return new D3D9Texture(this, width, height, pixels, format, name, transient);
+    return new VulkanTexture(this, width, height, pixels, format, name, transient);
 }
 
-void D3D9Engine::drawCaret(const Vector<2, float> &position, const Vector<2, float> &size,
+void VulkanEngine::drawCaret(const Vector<2, float> &position, const Vector<2, float> &size,
                            const Vector<4, float> &color)
 {
     if ((m_caretClock / CaretBlinkInterval) % 2) {
@@ -230,7 +221,7 @@ void D3D9Engine::drawCaret(const Vector<2, float> &position, const Vector<2, flo
     }
 }
 
-void D3D9Engine::invertRectangle(const Vector<2, float> &position, const Vector<2, float> &size)
+void VulkanEngine::invertRectangle(const Vector<2, float> &position, const Vector<2, float> &size)
 {
     m_device->SetTexture(0, 0);
     m_device->SetTexture(1, 0);
@@ -254,7 +245,7 @@ void D3D9Engine::invertRectangle(const Vector<2, float> &position, const Vector<
     m_device->SetRenderState(D3DRS_SEPARATEALPHABLENDENABLE, TRUE);
 }
 
-void D3D9Engine::drawTexturedRectangle(const Vector<2, float> &position, const Vector<2, float> &size,
+void VulkanEngine::drawTexturedRectangle(const Vector<2, float> &position, const Vector<2, float> &size,
                                        const Vector<2, float> &texturePosition, const Vector<2, float> &textureSize,
                                        const Vector<4, float> &color)
 {
@@ -285,7 +276,7 @@ void D3D9Engine::drawTexturedRectangle(const Vector<2, float> &position, const V
     }
 }
 
-void D3D9Engine::fillRectangle(const Vector<2, float> &position, const Vector<2, float> &size,
+void VulkanEngine::fillRectangle(const Vector<2, float> &position, const Vector<2, float> &size,
                                const Vector<4, float> &color)
 {
     BOOL textureEnabled = FALSE;
@@ -313,7 +304,7 @@ void D3D9Engine::fillRectangle(const Vector<2, float> &position, const Vector<2,
     m_device->DrawPrimitiveUP(D3DPT_TRIANGLEFAN, 2, vertices, sizeof(D3D9Vertex));
 }
 
-void D3D9Engine::drawSurfaceRectangle(const Vector<2, float> &position, const Vector<2, float> &size,
+void VulkanEngine::drawSurfaceRectangle(const Vector<2, float> &position, const Vector<2, float> &size,
                                       const Vector<2, float> &texturePosition, const Vector<2, float> &textureSize,
                                       const Vector<4, float> &color)
 {
@@ -350,12 +341,12 @@ void D3D9Engine::drawSurfaceRectangle(const Vector<2, float> &position, const Ve
     }
 }
 
-void D3D9Engine::endWindowDrawing()
+void VulkanEngine::endWindowDrawing()
 {
     m_windowRenderTarget->Release();
 }
 
-void D3D9Engine::popNodeMatrix(Node *node)
+void VulkanEngine::popNodeMatrix(Node *node)
 {
     if (!m_modelViewStack.empty()) {
         m_modelViewMatrix = m_modelViewStack.back();
@@ -363,7 +354,7 @@ void D3D9Engine::popNodeMatrix(Node *node)
     }
 }
 
-void D3D9Engine::endSurface()
+void VulkanEngine::endSurface()
 {
     m_surfaceStack.back()->end();
     popSurface();
@@ -373,12 +364,12 @@ void D3D9Engine::endSurface()
     }
 }
 
-void D3D9Engine::getModelViewMatrix(Matrix<float> &matrix)
+void VulkanEngine::getModelViewMatrix(Matrix<float> &matrix)
 {
     matrix = m_modelViewMatrix;
 }
 
-bool D3D9Engine::setupShadersAndFrameBuffer()
+bool VulkanEngine::setupShadersAndFrameBuffer()
 {
     m_shapeDeclaration = 0;
     // The shapes' vertices: a float2 position, then a float4 colour (D3D9Vertex).
@@ -388,25 +379,25 @@ bool D3D9Engine::setupShadersAndFrameBuffer()
                                        {0, 32, D3DDECLTYPE_FLOAT2, D3DDECLMETHOD_DEFAULT, D3DDECLUSAGE_TEXCOORD, 1},
                                        {0, 40, D3DDECLTYPE_FLOAT2, D3DDECLMETHOD_DEFAULT, D3DDECLUSAGE_TEXCOORD, 2},
                                        D3DDECL_END()};
-    if (m_device->CreateVertexDeclaration(declaration, &m_shapeDeclaration) != D3D_OK)
+    if (m_device->CreateVertexDeclaration(declaration, &m_shapeDeclaration) != S_OK)
         return false;
-    if (m_device->CreateVertexShader(shapeVertexShader, &m_shapeVertexShader) != D3D_OK)
+    if (m_device->CreateVertexShader(AlphaShaderId::ShapeVertexShader, &m_shapeVertexShader) != S_OK)
         return false;
-    if (m_device->CreatePixelShader(shapePixelShader, &m_shapePixelShader) != D3D_OK)
+    if (m_device->CreatePixelShader(AlphaShaderId::ShapePixelShader, &m_shapePixelShader) != S_OK)
         return false;
-    if (m_device->CreateVertexShader(surfaceVertexShader, &m_surfaceVertexShader) != D3D_OK)
+    if (m_device->CreateVertexShader(AlphaShaderId::SurfaceVertexShader, &m_surfaceVertexShader) != S_OK)
         return false;
-    if (m_device->CreatePixelShader(surfacePixelShader, &m_surfacePixelShader) != D3D_OK)
+    if (m_device->CreatePixelShader(AlphaShaderId::SurfacePixelShader, &m_surfacePixelShader) != S_OK)
         return false;
-    if (m_device->CreatePixelShader(downsample2PixelShader, &m_downsample2PixelShader) != D3D_OK)
+    if (m_device->CreatePixelShader(AlphaShaderId::Downsample2PixelShader, &m_downsample2PixelShader) != S_OK)
         return false;
-    if (m_device->CreatePixelShader(downsample3PixelShader, &m_downsample3PixelShader) != D3D_OK)
+    if (m_device->CreatePixelShader(AlphaShaderId::Downsample3PixelShader, &m_downsample3PixelShader) != S_OK)
         return false;
-    if (m_device->CreatePixelShader(downsample4PixelShader, &m_downsample4PixelShader) != D3D_OK)
+    if (m_device->CreatePixelShader(AlphaShaderId::Downsample4PixelShader, &m_downsample4PixelShader) != S_OK)
         return false;
-    if (m_device->CreatePixelShader(horizontalBlurPixelShader, &m_horizontalBlurPixelShader) != D3D_OK)
+    if (m_device->CreatePixelShader(AlphaShaderId::HorizontalBlurPixelShader, &m_horizontalBlurPixelShader) != S_OK)
         return false;
-    if (m_device->CreatePixelShader(verticalBlurPixelShader, &m_verticalBlurPixelShader) != D3D_OK)
+    if (m_device->CreatePixelShader(AlphaShaderId::VerticalBlurPixelShader, &m_verticalBlurPixelShader) != S_OK)
         return false;
     m_widgetDeformationRegister = 0;
     m_projectionRegister = 0;
@@ -435,11 +426,11 @@ bool D3D9Engine::setupShadersAndFrameBuffer()
     m_blur3ScaleRegister = 0;
     m_blur2ScaleRegister = 0;
     if (m_device->CreateVertexBuffer(4 * sizeof(D3D9Vertex), D3DUSAGE_DYNAMIC | D3DUSAGE_WRITEONLY, 0, D3DPOOL_DEFAULT,
-                                     &m_rectangleVertices, 0) != D3D_OK)
+                                     &m_rectangleVertices, 0) != S_OK)
         return false;
     // Six 32-bit indices: the rectangle's two triangles.
     if (m_device->CreateIndexBuffer(24, D3DUSAGE_WRITEONLY, D3DFMT_INDEX32, D3DPOOL_MANAGED, &m_rectangleIndices, 0) !=
-        D3D_OK)
+        S_OK)
         return false;
     int *indices;
     m_rectangleIndices->Lock(0, 24, reinterpret_cast<void **>(&indices), D3DLOCK_DISCARD);
@@ -453,16 +444,16 @@ bool D3D9Engine::setupShadersAndFrameBuffer()
     return true;
 }
 
-void D3D9Engine::restoreDeviceResources()
+void VulkanEngine::restoreDeviceResources()
 {
     if (!m_rectangleVertices)
         m_device->CreateVertexBuffer(4 * sizeof(D3D9Vertex), D3DUSAGE_DYNAMIC | D3DUSAGE_WRITEONLY, 0, D3DPOOL_DEFAULT,
                                      &m_rectangleVertices, 0);
-    for (std::list<D3D9Drawing *>::iterator it = m_drawings.begin(); it != m_drawings.end(); ++it)
+    for (std::list<VulkanDrawing *>::iterator it = m_drawings.begin(); it != m_drawings.end(); ++it)
         (*it)->restoreDeviceResources();
 }
 
-void D3D9Engine::releaseDeviceResources()
+void VulkanEngine::releaseDeviceResources()
 {
     if (m_rectangleVertices) {
         m_rectangleVertices->Release();
@@ -473,23 +464,23 @@ void D3D9Engine::releaseDeviceResources()
     m_renderSurfaces.clear();
     for (std::list<Widget *>::iterator it = m_widgets.begin(); it != m_widgets.end(); ++it) {
         if ((*it)->m_surface) {
-            D3D9RenderSurface *surface = dynamic_cast<D3D9RenderSurface *>((*it)->m_surface);
+            VulkanRenderSurface *surface = dynamic_cast<VulkanRenderSurface *>((*it)->m_surface);
             if (surface)
                 surface->releaseDeviceResources();
         }
     }
-    for (std::list<D3D9Drawing *>::iterator it = m_drawings.begin(); it != m_drawings.end(); ++it)
+    for (std::list<VulkanDrawing *>::iterator it = m_drawings.begin(); it != m_drawings.end(); ++it)
         (*it)->releaseDeviceResources();
     deleteRenderSurface(m_blurSurface);
     m_blurSurface = 0;
 }
 
-void D3D9Engine::loadMatrix(Matrix<float> &matrix)
+void VulkanEngine::loadMatrix(Matrix<float> &matrix)
 {
     m_modelViewMatrix = matrix;
 }
 
-void D3D9Engine::matrixLoaded()
+void VulkanEngine::matrixLoaded()
 {
     setVertexShaderMatrix(m_projectionRegister, m_projectionMatrix, 4);
     setVertexShaderMatrix(m_modelViewRegister, m_modelViewMatrix, 4);
@@ -499,7 +490,7 @@ void D3D9Engine::matrixLoaded()
     setVertexShaderMatrix(m_normalMatrixRegister, normalMatrix, 2);
 }
 
-void D3D9Engine::setVertexShaderMatrix(unsigned registerIndex, const Matrix<float> &matrix, unsigned count)
+void VulkanEngine::setVertexShaderMatrix(unsigned registerIndex, const Matrix<float> &matrix, unsigned count)
 {
     Matrix<float> transposed = matrix;
     transposed.transpose();

@@ -4,7 +4,7 @@
 // 0.2 sky and 0.8 fog).
 #include "World.hlsli"
 
-float4 main(PixelInput input) : COLOR0
+float4 main(PixelInput input) : SV_Target
 {
     float distance = saturate(input.fog.z);
     float fade = 1 - distance * distance * distance * distance * distance;

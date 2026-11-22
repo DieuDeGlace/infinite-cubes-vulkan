@@ -61,19 +61,26 @@ set(shader_output "${CMAKE_CURRENT_BINARY_DIR}/generated/spirv")
 file(MAKE_DIRECTORY "${shader_output}")
 target_include_directories(cubeworld PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated")
 
+set(vulkan_release_root "${CMAKE_CURRENT_LIST_DIR}/..")
 function(add_vulkan_shader directory name profile)
-  set(source "${CMAKE_CURRENT_SOURCE_DIR}/${directory}/${name}.hlsl")
-  file(GLOB includes CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/${directory}/*.hlsli")
-  set(binary "${shader_output}/${name}.spv")
-  set(header "${shader_output}/${name}.h")
-  set(embed "${CMAKE_CURRENT_SOURCE_DIR}/cmake/EmbedSpirv.py")
+  if(IS_ABSOLUTE "${directory}")
+    set(source_dir "${directory}")
+  else()
+    set(source_dir "${vulkan_release_root}/${directory}")
+  endif()
+  set(source "${source_dir}/${name}.hlsl")
+  file(GLOB includes CONFIGURE_DEPENDS "${source_dir}/*.hlsli")
+  set(symbol "${ARGV3}${name}")
+  set(binary "${shader_output}/${symbol}.spv")
+  set(header "${shader_output}/${symbol}.h")
+  set(embed "${vulkan_release_root}/cmake/EmbedSpirv.py")
   if(ANDROID AND name STREQUAL "WorldPixelShader")
     set(defines -DCUBE_MOBILE_SHADOWS=1)
   endif()
   add_custom_command(OUTPUT "${header}" BYPRODUCTS "${binary}"
     COMMAND "${DXC_EXECUTABLE}" -spirv -fspv-target-env=vulkan1.3 -fvk-use-dx-layout
             ${defines} -T "${profile}" -E main -Fo "${binary}" "${source}"
-    COMMAND "${Python3_EXECUTABLE}" "${embed}" "${binary}" "${header}" "${name}"
+    COMMAND "${Python3_EXECUTABLE}" "${embed}" "${binary}" "${header}" "${symbol}"
     DEPENDS "${source}" ${includes} "${embed}" "${DXC_EXECUTABLE}"
     VERBATIM)
   target_sources(cubeworld PRIVATE "${header}")

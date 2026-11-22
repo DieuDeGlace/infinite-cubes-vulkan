@@ -36,7 +36,7 @@ protected:
     friend class ScalableFont;
     friend class PlasmaFont;
     friend class GLEngine;
-    friend class D3D9Engine;
+    friend class VulkanEngine;
 
 public:
     // Game code sets the attributes directly (GameController's constructor).

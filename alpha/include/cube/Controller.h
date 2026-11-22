@@ -2,7 +2,7 @@
 #pragma once
 #include "plasma/Vector.h"
 
-struct IDirect3DDevice9;
+struct AlphaRenderDevice;
 
 namespace cube {
 
@@ -38,7 +38,7 @@ enum {
 
 class Controller {
 public:
-    explicit Controller(IDirect3DDevice9 *device);
+    explicit Controller(AlphaRenderDevice *device);
     virtual ~Controller() {}                        // Destructor.
     virtual bool isCursorVisible() { return true; } // GameController overrides this event.
     virtual void handleKeyDown(unsigned char key);
@@ -70,7 +70,7 @@ public:
     plasma::Vector<2, int> m_moveStick; // a movement stick (-32768..32767 per axis; WinMain zeroes it each frame)
     plasma::Vector<2, int>
         m_lookStick; // (0, 0); a second stick: GameController::update turns the camera with it like the mouse
-    IDirect3DDevice9 *m_device; // the constructor's argument (GameController passes its device)
+    AlphaRenderDevice *m_device; // the constructor's argument (GameController passes its device)
 };
 
 }

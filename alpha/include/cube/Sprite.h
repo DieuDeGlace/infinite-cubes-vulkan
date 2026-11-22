@@ -5,9 +5,8 @@
 #include <vector>
 #include "plasma/Vector.h"
 
-struct IDirect3DDevice9;
-struct IDirect3DVertexBuffer9;
-struct IDirect3DIndexBuffer9;
+struct AlphaRenderDevice;
+struct AlphaBuffer;
 
 namespace cube {
 class Database;
@@ -31,7 +30,7 @@ enum SpritePositionList {
 // Sprite is a voxel model with graphics buffers and material state.
 class Sprite {
 public:
-    Sprite(IDirect3DDevice9 *device, bool);
+    Sprite(AlphaRenderDevice *device, bool);
     virtual ~Sprite();
     void draw();
     bool isEmpty(const plasma::Vector<3, unsigned char> *color, bool showMarkers);
@@ -57,8 +56,8 @@ public:
     std::vector<plasma::Vector<3, int>> m_markers[SpriteMarkerCount];
     std::map<int, std::list<plasma::Vector<3, int>>> m_positionLists;
     plasma::Vector<3, unsigned char> *m_voxels; // owned x*y*z colors
-    IDirect3DVertexBuffer9 *m_vertexBuffer;     // owned COM reference
-    IDirect3DIndexBuffer9 *m_indexBuffer;       // owned COM reference
+    AlphaBuffer *m_vertexBuffer;     // owned COM reference
+    AlphaBuffer *m_indexBuffer;       // owned COM reference
     int m_vertexCount;
     int m_triangleCount;
     plasma::Vector<3, int> m_size;
@@ -66,7 +65,7 @@ public:
     bool m_meshDirty;
     bool m_showMarkers;
     bool m_deferMesh;
-    IDirect3DDevice9 *m_device; // borrowed
+    AlphaRenderDevice *m_device; // borrowed
     plasma::Vector<3, unsigned char> m_tint;
 };
 }

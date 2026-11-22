@@ -1,85 +1,85 @@
-#include "plasma/D3D9Texture.h"
-#include "plasma/D3D9Engine.h"
+#include "plasma/VulkanTexture.h"
+#include "plasma/VulkanEngine.h"
 #include <cstring>
 
 namespace plasma {
 
-D3D9Texture::D3D9Texture(D3D9Engine *engine, int width, int height, const unsigned char *pixels,
+VulkanTexture::VulkanTexture(VulkanEngine *engine, int width, int height, const unsigned char *pixels,
                          const TextureFormat &format, const std::wstring &name, bool transient)
     : Texture(engine, name, transient),
       m_texture(0),
-      m_d3dEngine(engine)
+      m_vulkanEngine(engine)
 {
     setPixels(width, height, pixels, format);
 }
 
-D3D9Texture::~D3D9Texture()
+VulkanTexture::~VulkanTexture()
 {
     if (m_texture)
         m_texture->Release();
 }
 
-void D3D9Texture::bind(int stage)
+void VulkanTexture::bind(int stage)
 {
     if (!m_texture) {
         upload(&m_pixels[0]);
         if (m_transient)
             m_pixels.clear();
     }
-    m_d3dEngine->m_device->SetTexture(stage, m_texture);
+    m_vulkanEngine->m_device->SetTexture(stage, m_texture);
     switch (m_format.minFilter) {
     case TEXTURE_FILTER_NEAREST:
-        m_d3dEngine->m_device->SetSamplerState(stage, D3DSAMP_MINFILTER, D3DTEXF_POINT);
-        m_d3dEngine->m_device->SetSamplerState(stage, D3DSAMP_MIPFILTER, D3DTEXF_NONE);
+        m_vulkanEngine->m_device->SetSamplerState(stage, D3DSAMP_MINFILTER, D3DTEXF_POINT);
+        m_vulkanEngine->m_device->SetSamplerState(stage, D3DSAMP_MIPFILTER, D3DTEXF_NONE);
         break;
     case TEXTURE_FILTER_LINEAR:
-        m_d3dEngine->m_device->SetSamplerState(stage, D3DSAMP_MINFILTER, D3DTEXF_LINEAR);
-        m_d3dEngine->m_device->SetSamplerState(stage, D3DSAMP_MIPFILTER, D3DTEXF_NONE);
+        m_vulkanEngine->m_device->SetSamplerState(stage, D3DSAMP_MINFILTER, D3DTEXF_LINEAR);
+        m_vulkanEngine->m_device->SetSamplerState(stage, D3DSAMP_MIPFILTER, D3DTEXF_NONE);
         break;
     case TEXTURE_FILTER_MIPMAP:
-        m_d3dEngine->m_device->SetSamplerState(stage, D3DSAMP_MINFILTER, D3DTEXF_ANISOTROPIC);
-        m_d3dEngine->m_device->SetSamplerState(stage, D3DSAMP_MIPFILTER, D3DTEXF_LINEAR);
+        m_vulkanEngine->m_device->SetSamplerState(stage, D3DSAMP_MINFILTER, D3DTEXF_ANISOTROPIC);
+        m_vulkanEngine->m_device->SetSamplerState(stage, D3DSAMP_MIPFILTER, D3DTEXF_LINEAR);
         break;
     }
     switch (m_format.maxFilter) {
     case TEXTURE_FILTER_NEAREST:
-        m_d3dEngine->m_device->SetSamplerState(stage, D3DSAMP_MAGFILTER, D3DTEXF_POINT);
-        m_d3dEngine->m_device->SetSamplerState(stage, D3DSAMP_MIPFILTER, D3DTEXF_NONE);
+        m_vulkanEngine->m_device->SetSamplerState(stage, D3DSAMP_MAGFILTER, D3DTEXF_POINT);
+        m_vulkanEngine->m_device->SetSamplerState(stage, D3DSAMP_MIPFILTER, D3DTEXF_NONE);
         break;
     case TEXTURE_FILTER_LINEAR:
-        m_d3dEngine->m_device->SetSamplerState(stage, D3DSAMP_MAGFILTER, D3DTEXF_LINEAR);
-        m_d3dEngine->m_device->SetSamplerState(stage, D3DSAMP_MIPFILTER, D3DTEXF_NONE);
+        m_vulkanEngine->m_device->SetSamplerState(stage, D3DSAMP_MAGFILTER, D3DTEXF_LINEAR);
+        m_vulkanEngine->m_device->SetSamplerState(stage, D3DSAMP_MIPFILTER, D3DTEXF_NONE);
         break;
     case TEXTURE_FILTER_MIPMAP:
-        m_d3dEngine->m_device->SetSamplerState(stage, D3DSAMP_MAGFILTER, D3DTEXF_ANISOTROPIC);
-        m_d3dEngine->m_device->SetSamplerState(stage, D3DSAMP_MIPFILTER, D3DTEXF_LINEAR);
+        m_vulkanEngine->m_device->SetSamplerState(stage, D3DSAMP_MAGFILTER, D3DTEXF_ANISOTROPIC);
+        m_vulkanEngine->m_device->SetSamplerState(stage, D3DSAMP_MIPFILTER, D3DTEXF_LINEAR);
         break;
     }
     switch (m_format.horizontalWrap) {
     case TEXTURE_WRAP_NONE:
-        m_d3dEngine->m_device->SetSamplerState(stage, D3DSAMP_ADDRESSU, D3DTADDRESS_BORDER);
+        m_vulkanEngine->m_device->SetSamplerState(stage, D3DSAMP_ADDRESSU, D3DTADDRESS_BORDER);
         break;
     case TEXTURE_WRAP_REPEAT:
-        m_d3dEngine->m_device->SetSamplerState(stage, D3DSAMP_ADDRESSU, D3DTADDRESS_WRAP);
+        m_vulkanEngine->m_device->SetSamplerState(stage, D3DSAMP_ADDRESSU, D3DTADDRESS_WRAP);
         break;
     case TEXTURE_WRAP_MIRROR:
-        m_d3dEngine->m_device->SetSamplerState(stage, D3DSAMP_ADDRESSU, D3DTADDRESS_MIRROR);
+        m_vulkanEngine->m_device->SetSamplerState(stage, D3DSAMP_ADDRESSU, D3DTADDRESS_MIRROR);
         break;
     }
     switch (m_format.verticalWrap) {
     case TEXTURE_WRAP_NONE:
-        m_d3dEngine->m_device->SetSamplerState(stage, D3DSAMP_ADDRESSV, D3DTADDRESS_BORDER);
+        m_vulkanEngine->m_device->SetSamplerState(stage, D3DSAMP_ADDRESSV, D3DTADDRESS_BORDER);
         break;
     case TEXTURE_WRAP_REPEAT:
-        m_d3dEngine->m_device->SetSamplerState(stage, D3DSAMP_ADDRESSV, D3DTADDRESS_WRAP);
+        m_vulkanEngine->m_device->SetSamplerState(stage, D3DSAMP_ADDRESSV, D3DTADDRESS_WRAP);
         break;
     case TEXTURE_WRAP_MIRROR:
-        m_d3dEngine->m_device->SetSamplerState(stage, D3DSAMP_ADDRESSV, D3DTADDRESS_MIRROR);
+        m_vulkanEngine->m_device->SetSamplerState(stage, D3DSAMP_ADDRESSV, D3DTADDRESS_MIRROR);
         break;
     }
 }
 
-void D3D9Texture::upload(const unsigned char *pixels)
+void VulkanTexture::upload(const unsigned char *pixels)
 {
     if (m_texture) {
         m_texture->Release();
@@ -91,7 +91,7 @@ void D3D9Texture::upload(const unsigned char *pixels)
         channels = 3;
         format = D3DFMT_R8G8B8;
     }
-    IDirect3DDevice9 *device = m_d3dEngine->m_device;
+    AlphaRenderDevice *device = m_vulkanEngine->m_device;
     if (m_format.minFilter == TEXTURE_FILTER_MIPMAP)
         device->CreateTexture(m_width, m_height, 0, 0, format, D3DPOOL_MANAGED, &m_texture, 0);
     else

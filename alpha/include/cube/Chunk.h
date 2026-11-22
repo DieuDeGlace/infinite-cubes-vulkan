@@ -1,7 +1,7 @@
 // Chunk holds the meshes of a 32-by-32-block rendering area. ChunkBuffer owns its three Direct3D buffers and releases them on destruction.
 #pragma once
 #include <windows.h>
-#include <d3d9.h>
+#include "gfx/AlphaRenderDevice.h"
 #include <list>
 #include "plasma/Vector.h"
 #include "cube/Fixed.h"
@@ -26,9 +26,9 @@ struct ChunkBuffer {
             waterIndexBuffer->Release();
     }
 
-    IDirect3DVertexBuffer9 *vertexBuffer;
-    IDirect3DIndexBuffer9 *indexBuffer;
-    IDirect3DIndexBuffer9 *waterIndexBuffer; // Water-face indices, filled by updateChunk and bound by the water pass.
+    AlphaBuffer *vertexBuffer;
+    AlphaBuffer *indexBuffer;
+    AlphaBuffer *waterIndexBuffer; // Water-face indices, filled by updateChunk and bound by the water pass.
     // Draws indexed triangles using vertexCount and the solid or water primitive count, translated to
     // the chunk corner and base height.
     int vertexCount;

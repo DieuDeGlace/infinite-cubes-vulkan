@@ -6,7 +6,7 @@
 namespace cube {
 
 // Clears the input state.
-Controller::Controller(IDirect3DDevice9 *device)
+Controller::Controller(AlphaRenderDevice *device)
     : m_moveStick(0, 0),
       m_lookStick(0, 0),
       m_device(device)

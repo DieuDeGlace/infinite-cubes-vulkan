@@ -22,8 +22,8 @@
 #include "cube/World.h"
 #include "cube/WorldMap.h"
 
-struct IDirect3DDevice9;
-struct IDirect3DTexture9;
+struct AlphaRenderDevice;
+struct AlphaTexture;
 
 namespace plasma {
 class Engine;
@@ -202,7 +202,7 @@ float roundHundredth(float value);
 class GameController : public Controller {
 public:
     // WinMain supplies the device, shader, engine, audio engine, options, display resolutions, server-mode flag and server address.
-    GameController(IDirect3DDevice9 *device, CubeShader *shader, plasma::Engine *engine, Audio *audio, Options *options,
+    GameController(AlphaRenderDevice *device, CubeShader *shader, plasma::Engine *engine, Audio *audio, Options *options,
                    std::vector<plasma::Vector<2, int>> *resolutions, bool server, const std::string &serverAddress);
     virtual ~GameController();
     virtual bool isCursorVisible();
@@ -284,6 +284,12 @@ public:
     // Called by update for a mission's creature (restart) and for the creature the player talks to :
     // Starts or advances the creature's conversation in a speech widget.
     void talkTo(Creature *creature, bool restart);
+    bool hasTownQuest(const Creature &giver);
+    bool talkAboutTownQuest(Creature &giver, std::vector<Dialog> &dialogs);
+    bool updateTownQuests(int elapsed);
+    std::wstring townQuestSummary();
+    bool recordTownQuestKill(const KillPacket &kill);
+    int m_townQuestSearchDelay = 0;
     // R on a hovered object : advances the player's speech.
     void useObject(Zone::Object *object, bool advance);
     // Meshes a 32-by-32-block chunk into solid and water faces and uploads the buffers. The chunk worker calls this helper.
@@ -465,8 +471,8 @@ public:
     Creature *m_player;                      // the local player's creature
     int unused8006d4;                        // zeroed with m_target by update's picking; nothing reads it
     Creature *m_target;                      // the locked-on creature, or null
-    IDirect3DTexture9 *m_shadowTexture;      // 256 x 256 A8R8G8B8, managed
-    IDirect3DTexture9 *m_sunTexture;
+    AlphaTexture *m_shadowTexture;      // 256 x 256 A8R8G8B8, managed
+    AlphaTexture *m_sunTexture;
     bool m_mapOpen; // key M; the wheel then changes m_targetMapZoom instead of m_cameraDistance
     bool m_slowMotion;
     bool m_drawPlayerOnly;
@@ -538,6 +544,8 @@ public:
     plasma::Node *m_infoNode;           // the information text of the game screen (its shadow)
     plasma::TextShape *m_infoText;      // the information text
     plasma::Node *m_questTag;           // from quest-tag.plx
+    plasma::Node *m_townQuestTag = nullptr;
+    std::wstring m_lastTownQuestSummary;
     plasma::Node *m_smallQuestTag;      // from quest-tag.plx
     int unused800870;                   // Initially zero and unread.
     // Interface nodes instantiated from source nodes. Unidentified nodes retain opaque names.

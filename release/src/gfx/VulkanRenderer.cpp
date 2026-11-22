@@ -1,12 +1,13 @@
 #include "gfx/VulkanRenderer.h"
+#define FREEIMAGE_LIB
+#include "VulkanQuestIcons.h"
 
 #include <algorithm>
 #include <chrono>
 #include <cmath>
 #include <ctime>
 #include <memory>
-#define FREEIMAGE_LIB
-#include <FreeImage.h>
+
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/type_ptr.hpp>
 #include "cube/World.h"
@@ -31,48 +32,6 @@ static const float GroundSpotSurfaceLift = 0.0035f;
 static const int GroundShadowMaximumOpacity = 100;
 static const float TrailOuterMaximumOpacity = 50.0f;
 static const float TrailInnerMaximumOpacity = 200.0f;
-
-namespace {
-
-#include "QuestIconPng.h"
-
-constexpr int QuestAtlasWidth = 320;
-constexpr int QuestAtlasHeight = 80;
-
-ImagePtr loadQuestIcons(VulkanContext &context)
-{
-    std::unique_ptr<FIMEMORY, decltype(&FreeImage_CloseMemory)> png(
-        FreeImage_OpenMemory(const_cast<unsigned char *>(QuestIconPng), sizeof(QuestIconPng)), FreeImage_CloseMemory);
-    if (!png)
-        return {};
-    std::unique_ptr<FIBITMAP, decltype(&FreeImage_Unload)> bitmap(FreeImage_LoadFromMemory(FIF_PNG, png.get(), 0),
-                                                                  FreeImage_Unload);
-    if (!bitmap)
-        return {};
-    std::unique_ptr<FIBITMAP, decltype(&FreeImage_Unload)> rgba(FreeImage_ConvertTo32Bits(bitmap.get()),
-                                                                FreeImage_Unload);
-    if (!rgba || FreeImage_GetWidth(rgba.get()) != QuestAtlasWidth ||
-        FreeImage_GetHeight(rgba.get()) != QuestAtlasHeight)
-        return {};
-
-    std::vector<plasma::Vector<4, unsigned char>> pixels(QuestAtlasWidth * QuestAtlasHeight);
-    for (int y = 0; y < QuestAtlasHeight; ++y) {
-        const auto *pixel = FreeImage_GetScanLine(rgba.get(), QuestAtlasHeight - 1 - y);
-        for (int x = 0; x < QuestAtlasWidth; ++x, pixel += 4) {
-            const auto red = pixel[FI_RGBA_RED];
-            const auto green = pixel[FI_RGBA_GREEN];
-            const auto blue = pixel[FI_RGBA_BLUE];
-            auto &output = pixels[y * QuestAtlasWidth + x];
-            if (std::max(red, blue) * 13 > green * 10)
-                output = {red, green, blue, pixel[FI_RGBA_ALPHA]};
-            else
-                output = {255, 255, 255, 0};
-        }
-    }
-    return context.createTexture(QuestAtlasWidth, QuestAtlasHeight, pixels.data());
-}
-
-}
 
 VulkanRenderer::VulkanRenderer(cube::World *world, cube::WorldMap *worldMap, plasma::Engine *engine,
                                VulkanContext &context, bool alphaLighting, bool sunShadows, bool rsmGI)
@@ -398,7 +357,6 @@ void VulkanRenderer::drawQuestMarkers(const std::vector<QuestMarker> &markers, c
         return;
 
     const auto clipFromWorld = glm::make_mat4(&projection[0]) * glm::make_mat4(&view[0]);
-    const plasma::Vector<4, unsigned char> white(255, 255, 255, 255);
     std::vector<TexturedVertex> vertices;
     std::vector<uint32_t> indices;
     vertices.reserve(markers.size() * 4);
@@ -409,23 +367,7 @@ void VulkanRenderer::drawQuestMarkers(const std::vector<QuestMarker> &markers, c
         if (clip.w <= 0.0f || clip.z < 0.0f || clip.z >= clip.w)
             continue;
 
-        const bool giver = marker.icon == QuestIcon::Giver;
-        const int iconX = giver ? 188 : marker.icon == QuestIcon::Objective ? 96 : 16;
-        constexpr int IconY = 16;
-        const int iconWidth = giver ? 24 : 48;
-        const int iconHeight = giver ? 48 : 52;
-        const float halfWidth = clip.w * iconWidth * 0.5f / m_width;
-        const float top = clip.y + clip.w * iconHeight / m_height;
-        const float u0 = float(iconX) / QuestAtlasWidth;
-        const float u1 = float(iconX + iconWidth) / QuestAtlasWidth;
-        const float v0 = float(IconY) / QuestAtlasHeight;
-        const float v1 = float(IconY + iconHeight) / QuestAtlasHeight;
-        const auto base = static_cast<uint32_t>(vertices.size());
-        vertices.push_back({{clip.x - halfWidth, top, clip.z, clip.w}, white, {u0, v0}});
-        vertices.push_back({{clip.x + halfWidth, top, clip.z, clip.w}, white, {u1, v0}});
-        vertices.push_back({{clip.x + halfWidth, clip.y, clip.z, clip.w}, white, {u1, v1}});
-        vertices.push_back({{clip.x - halfWidth, clip.y, clip.z, clip.w}, white, {u0, v1}});
-        indices.insert(indices.end(), {base, base + 1, base + 2, base, base + 2, base + 3});
+        appendQuestIcon(marker.icon, {clip.x, clip.y, clip.z, clip.w}, m_width, m_height, vertices, indices);
     }
     if (indices.empty())
         return;

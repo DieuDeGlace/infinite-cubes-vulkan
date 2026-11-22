@@ -1,27 +1,66 @@
-// CubeShader's water pixel shader (m_waterPixelShader): the chunks' water faces, which
-// GameController's render draws last. A water colour that turns from turquoise to blue up the
-// screen, scaled by the vertex colour's blue, plus a specular highlight of the sky's first colour
-// (a half vector between the light, raised by 2 along z, and the camera; the vertex alpha masks
-// it), fogged and faded into the sky gradient with the distance. Water grows opaque with the
-// distance (0.8 near, plus 0.0001 of the squared camera distance). The sky blends in from a fog
-// term of 0.5; the gradient and the horizon are the world pixel shader's (0.6, 2, 0.2 sky and 0.8
-// fog); the highlight's exponent is 10.
+// Steam water optics evaluated in Alpha's camera-relative block coordinates.
 #include "World.hlsli"
+#include "../../../../release/src/gfx/shaders/WaterOptics.hlsli"
 
-float4 main(PixelInput input) : COLOR0
+[[vk::binding(0, 1)]] Texture2D<float4> opaqueColor;
+[[vk::binding(4, 1)]] Texture2D<float> opaqueDepth;
+[[vk::binding(2, 1)]] SamplerState colorSampler;
+[[vk::binding(5, 1)]] SamplerState depthSampler;
+
+float linearDepth(float depth)
 {
-    float2 amounts = float2(input.fog.z - 0.5, input.fog.y + 1);
-    float depthAmount = saturate(amounts.y);
-    float skyAmount = saturate(amounts.x + amounts.x);
-    float3 sky = lerp(skyColor1.rgb, skyColor2.rgb, smoothCurve(saturate(0.6 * input.fog.y)));
-    float horizonAmount = smoothCurve(saturate(2 * input.fog.y + 1));
-    float3 horizon = 0.2 * skyColor1.rgb + 0.8 * fogColor.rgb;
-    float3 water = lerp(float3(0, 0.6, 1), float3(0, 0.1, 1), depthAmount);
-    float3 halfway = normalize(normalize(input.lightDirection + float3(0, 0, 2)) + normalize(input.cameraDirection));
-    float3 specular = pow(saturate(halfway.z), 10) * input.color.a * skyColor1.rgb;
-    float3 color = input.color.b * water + specular;
-    sky = lerp(horizon, sky, horizonAmount);
-    color = lerp(color, fogColor.rgb, saturate(input.fog.z));
-    // The opacity is computed here, in the return: as an earlier statement it changes the schedule.
-    return float4(lerp(color, sky, skyAmount), dot(input.cameraDirection, input.cameraDirection) * 0.0001 + 0.8);
+    return projectionDepth.y / (depth - projectionDepth.x);
+}
+
+float4 main(float4 position : SV_Position, PixelInput input) : SV_Target
+{
+    const float3 toCamera = input.cameraDirection;
+    const float3 worldPosition = sceneCamera - toCamera;
+    const float distance = length(toCamera);
+    float3 normal = normalize(cross(ddx(worldPosition), ddy(worldPosition)));
+    if (normal.z < 0)
+        normal = -normal;
+    const bool surface = normal.z > 0.5;
+    if (surface)
+        normal = waveNormal(worldPosition.xy, distance, waterSurface.xy);
+    if (dot(normal, toCamera) < 0)
+        normal = -normal;
+
+    const float3 fog = fogColor.rgb;
+    const float haze = smoothstep(0.6, 1, distance * fogScale);
+    if (haze >= 1)
+        return float4(fog, 1);
+
+    uint width, height;
+    opaqueDepth.GetDimensions(width, height);
+    const float2 pixel = 1.0 / float2(width, height);
+    const float2 uv = position.xy * pixel;
+    float2 refracted = clamp(uv + normal.xy * 0.006, 0.5 * pixel, 1 - 0.5 * pixel);
+    const float surfaceDepth = linearDepth(position.z);
+    float sceneDepth = linearDepth(opaqueDepth.SampleLevel(depthSampler, refracted, 0));
+    // A refracted ray that reaches foreground geometry would pull in color from above the water.
+    if (sceneDepth < surfaceDepth)
+    {
+        refracted = uv;
+        sceneDepth = linearDepth(opaqueDepth.SampleLevel(depthSampler, uv, 0));
+    }
+    const float thickness = clamp(sceneDepth - surfaceDepth, 0.3, 100);
+    const float3 transmission = exp(-Absorption * thickness);
+    const float brightness = waterSurface.z;
+    const bool submerged = waterSurface.w > 0.5;
+    const float3 body = submerged ? fog : DeepWater * brightness;
+    float3 color = opaqueColor.SampleLevel(colorSampler, refracted, 0).rgb * transmission + body * (1 - transmission);
+
+    if (surface && !submerged)
+    {
+        // lightDirection points towards the sun; the glints fade as it sets.
+        const float sunUp = saturate(input.lightDirection.z * 5);
+        const float reflected = saturate(dot(reflect(-toCamera / distance, normal), input.lightDirection));
+        const float glint = saturate(pow(reflected, GlintPower) * GlintStrength) * sunUp * brightness;
+        if (glint > 0.001)
+            color += glint;
+    }
+
+    // The background is already included in the refraction. Write opaque color and the nearest surface depth.
+    return float4(saturate(lerp(color, fog, haze)), 1);
 }

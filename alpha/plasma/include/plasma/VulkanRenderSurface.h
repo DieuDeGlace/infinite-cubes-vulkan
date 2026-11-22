@@ -1,14 +1,14 @@
 #pragma once
-#include <d3d9.h>
+#include "gfx/AlphaRenderDevice.h"
 #include "plasma/RenderSurface.h"
 
 namespace plasma {
-class D3D9Engine;
+class VulkanEngine;
 
-class D3D9RenderSurface : public RenderSurface {
+class VulkanRenderSurface : public RenderSurface {
 public:
-    D3D9RenderSurface(D3D9Engine *engine, bool depthAttachment);
-    virtual ~D3D9RenderSurface();
+    VulkanRenderSurface(VulkanEngine *engine, bool depthAttachment);
+    virtual ~VulkanRenderSurface();
     virtual bool resize(int width, int height);
     virtual void begin();
     virtual void end();
@@ -25,11 +25,11 @@ public:
 private:
     int m_width;
     int m_height;
-    D3D9Engine *m_engine;
-    IDirect3DTexture9 *m_colorTexture;
-    IDirect3DSurface9 *m_colorSurface;
-    IDirect3DSurface9 *m_depthSurface;
-    IDirect3DSurface9 *m_previousColorSurface; // retained between Begin and End
-    IDirect3DSurface9 *m_previousDepthSurface;
+    VulkanEngine *m_engine;
+    AlphaTexture *m_colorTexture;
+    AlphaSurface *m_colorSurface;
+    AlphaSurface *m_depthSurface;
+    AlphaSurface *m_previousColorSurface; // retained between Begin and End
+    AlphaSurface *m_previousDepthSurface;
 };
 }

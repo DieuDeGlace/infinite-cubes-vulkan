@@ -154,7 +154,7 @@ struct VulkanContext::Frame {
     size_t pageIndex = 0;
     std::vector<VkDescriptorPool> pools;
     size_t poolIndex = 0;
-    std::map<std::array<VkImageView, ImageBindings.size()>, VkDescriptorSet> imageSets;
+    std::map<std::pair<std::array<VkImageView, ImageBindings.size()>, std::array<VkSampler, 2>>, VkDescriptorSet> imageSets;
     std::vector<std::shared_ptr<void>> inUse;
     VkPipeline boundPipeline = VK_NULL_HANDLE;
 };
@@ -190,6 +190,8 @@ VulkanContext::~VulkanContext()
         vkDestroyPipelineLayout(m_device, m_pipelineLayout, nullptr);
         vkDestroyDescriptorSetLayout(m_device, m_textureLayout, nullptr);
         vkDestroyDescriptorSetLayout(m_device, m_uniformLayout, nullptr);
+        for (const auto &entry : m_samplers)
+            vkDestroySampler(m_device, entry.second, nullptr);
         vkDestroySampler(m_device, m_sampler, nullptr);
         vkDestroySampler(m_device, m_pointSampler, nullptr);
         if (m_allocator)
@@ -352,6 +354,8 @@ void VulkanContext::createLayouts()
         {3, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 1, VK_SHADER_STAGE_FRAGMENT_BIT},
         {4, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 1, VK_SHADER_STAGE_FRAGMENT_BIT},
         {5, VK_DESCRIPTOR_TYPE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, &m_pointSampler},
+        {6, VK_DESCRIPTOR_TYPE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT},
+        {7, VK_DESCRIPTOR_TYPE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT},
     };
     layout.bindingCount = static_cast<uint32_t>(std::size(textures));
     layout.pBindings = textures;
@@ -362,6 +366,25 @@ void VulkanContext::createLayouts()
     pipeline.setLayoutCount = 2;
     pipeline.pSetLayouts = sets;
     check(vkCreatePipelineLayout(m_device, &pipeline, nullptr, &m_pipelineLayout), "Create pipeline layout");
+}
+
+void VulkanContext::setTextureSampler(unsigned slot, VkFilter min, VkFilter mag, VkSamplerAddressMode u,
+                                      VkSamplerAddressMode v)
+{
+    const auto key = std::make_tuple(min, mag, u, v);
+    auto it = m_samplers.find(key);
+    if (it == m_samplers.end()) {
+        VkSamplerCreateInfo info {VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO};
+        info.minFilter = min;
+        info.magFilter = mag;
+        info.addressModeU = u;
+        info.addressModeV = v;
+        info.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+        VkSampler sampler;
+        check(vkCreateSampler(m_device, &info, nullptr, &sampler), "Create texture sampler");
+        it = m_samplers.emplace(key, sampler).first;
+    }
+    m_textureSamplers.at(slot) = it->second;
 }
 
 void VulkanContext::createShaders()
@@ -1017,9 +1040,52 @@ void VulkanContext::snapshotWaterBackground()
 
 void VulkanContext::setDrawState(VulkanDrawState state, const void *uniforms, size_t uniformSize)
 {
+    m_pipelineSource = nullptr;
+    m_scissorEnabled = false;
     m_state = state;
     m_uniforms = uniforms;
     m_uniformSize = uniformSize;
+}
+
+void VulkanContext::setDrawState(VulkanPipelineSource &source, const void *uniforms, size_t uniformSize,
+                                 const VkRect2D *scissor)
+{
+    m_pipelineSource = &source;
+    m_uniforms = uniforms;
+    m_uniformSize = uniformSize;
+    m_scissorEnabled = scissor != nullptr;
+    if (scissor)
+        m_drawScissor = *scissor;
+}
+
+static VkRect2D clipRectangle(VkRect2D rect, VkExtent2D size)
+{
+    const int32_t left = std::clamp(rect.offset.x, 0, int32_t(size.width));
+    const int32_t top = std::clamp(rect.offset.y, 0, int32_t(size.height));
+    const auto right = std::clamp<int64_t>(int64_t(rect.offset.x) + rect.extent.width, left, size.width);
+    const auto bottom = std::clamp<int64_t>(int64_t(rect.offset.y) + rect.extent.height, top, size.height);
+    return {{left, top}, {uint32_t(right - left), uint32_t(bottom - top)}};
+}
+
+void VulkanContext::clearAttachments(const VkClearColorValue *color, const float *depth, const VkRect2D *rectangle)
+{
+    if (!m_rendering)
+        return;
+    const Target &target = m_targets.back();
+    const VkExtent2D size = target.color ? target.color->size : target.depth->size;
+    VkClearRect rect {rectangle ? clipRectangle(*rectangle, size) : VkRect2D {{0, 0}, size}, 0, 1};
+    VkClearAttachment attachments[2] = {};
+    uint32_t count = 0;
+    if (color && target.color) {
+        attachments[count].aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+        attachments[count++].clearValue.color = *color;
+    }
+    if (depth && target.depth) {
+        attachments[count].aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT;
+        attachments[count++].clearValue.depthStencil.depth = *depth;
+    }
+    if (count && rect.rect.extent.width && rect.rect.extent.height)
+        vkCmdClearAttachments(m_frame->command, count, attachments, 1, &rect);
 }
 
 void VulkanContext::bindTexture(unsigned slot, const ImagePtr &image)
@@ -1067,7 +1133,7 @@ VkDescriptorSet VulkanContext::allocateSet(VkDescriptorSetLayout layout)
             const VkDescriptorPoolSize sizes[] = {
                 {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC, BufferSetsPerPool},
                 {VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, ImageSetsPerPool * static_cast<uint32_t>(ImageBindings.size())},
-                {VK_DESCRIPTOR_TYPE_SAMPLER, ImageSetsPerPool * 2},
+                {VK_DESCRIPTOR_TYPE_SAMPLER, ImageSetsPerPool * 4},
             };
             VkDescriptorPoolCreateInfo info {VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
             info.maxSets = BufferSetsPerPool + ImageSetsPerPool;
@@ -1095,7 +1161,9 @@ VkDescriptorSet VulkanContext::textureSet()
 {
     const Target &target = m_targets.back();
     std::array<ImagePtr, ImageBindings.size()> textures;
-    switch (m_state.program) {
+    if (m_pipelineSource)
+        textures = m_textures;
+    else switch (m_state.program) {
     case VulkanProgram::Textured:
         textures[0] = m_textures[0];
         break;
@@ -1135,13 +1203,17 @@ VkDescriptorSet VulkanContext::textureSet()
     std::array<VkImageView, ImageBindings.size()> key;
     for (size_t i = 0; i < key.size(); ++i)
         key[i] = textures[i]->view;
-    const auto cached = m_frame->imageSets.find(key);
+    auto samplers = m_textureSamplers;
+    for (auto &sampler : samplers)
+        if (!sampler) sampler = m_sampler;
+    const auto descriptorKey = std::make_pair(key, samplers);
+    const auto cached = m_frame->imageSets.find(descriptorKey);
     if (cached != m_frame->imageSets.end())
         return cached->second;
 
     const VkDescriptorSet set = allocateSet(m_textureLayout);
-    VkDescriptorImageInfo images[ImageBindings.size()] = {};
-    VkWriteDescriptorSet writes[ImageBindings.size()] = {};
+    VkDescriptorImageInfo images[ImageBindings.size() + 2] = {};
+    VkWriteDescriptorSet writes[ImageBindings.size() + 2] = {};
     for (uint32_t slot = 0; slot < ImageBindings.size(); ++slot) {
         images[slot].imageView = textures[slot]->view;
         images[slot].imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
@@ -1153,8 +1225,18 @@ VkDescriptorSet VulkanContext::textureSet()
         writes[slot].pImageInfo = &images[slot];
         m_frame->inUse.push_back(textures[slot]);
     }
-    vkUpdateDescriptorSets(m_device, static_cast<uint32_t>(ImageBindings.size()), writes, 0, nullptr);
-    m_frame->imageSets.emplace(key, set);
+    for (uint32_t i = 0; i < samplers.size(); ++i) {
+        const size_t index = ImageBindings.size() + i;
+        images[index].sampler = samplers[i];
+        writes[index].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        writes[index].dstSet = set;
+        writes[index].dstBinding = 6 + i;
+        writes[index].descriptorCount = 1;
+        writes[index].descriptorType = VK_DESCRIPTOR_TYPE_SAMPLER;
+        writes[index].pImageInfo = &images[index];
+    }
+    vkUpdateDescriptorSets(m_device, uint32_t(std::size(writes)), writes, 0, nullptr);
+    m_frame->imageSets.emplace(descriptorKey, set);
     return set;
 }
 
@@ -1169,17 +1251,17 @@ void VulkanContext::drawTransient(const void *vertices, size_t vertexBytes, cons
     drawIndexed(indexCount);
 }
 
-void VulkanContext::drawIndexed(uint32_t indexCount)
+void VulkanContext::drawIndexed(uint32_t indexCount, uint32_t firstIndex, int32_t vertexOffset)
 {
     if (!m_frame || !indexCount || !m_vertex.buffer || !m_index.buffer || !m_uniforms)
         return;
-    const bool textured = m_state.program == VulkanProgram::Textured || m_state.program == VulkanProgram::Interface ||
+    const bool textured = m_pipelineSource || m_state.program == VulkanProgram::Textured || m_state.program == VulkanProgram::Interface ||
                           m_state.program == VulkanProgram::World || m_state.program == VulkanProgram::Water;
     bindDrawState(textured);
     const auto command = m_frame->command;
     vkCmdBindVertexBuffers(command, 0, 1, &m_vertex.buffer->handle, &m_vertex.offset);
     vkCmdBindIndexBuffer(command, m_index.buffer->handle, m_index.offset, m_indexType);
-    vkCmdDrawIndexed(command, indexCount, 1, 0, 0, 0);
+    vkCmdDrawIndexed(command, indexCount, 1, firstIndex, vertexOffset, 0);
     // Meshes and drawings can be rebuilt before the GPU completes this frame.
     m_frame->inUse.push_back(m_vertex.buffer);
     m_frame->inUse.push_back(m_index.buffer);
@@ -1204,6 +1286,12 @@ void VulkanContext::bindDrawState(bool textured)
     }
 
     const VkCommandBuffer command = m_frame->command;
+    if (m_pipelineSource) {
+        const Target &target = m_targets.back();
+        const VkExtent2D size = target.color ? target.color->size : target.depth->size;
+        const VkRect2D rect = m_scissorEnabled ? clipRectangle(m_drawScissor, size) : VkRect2D {{0, 0}, size};
+        vkCmdSetScissor(command, 0, 1, &rect);
+    }
     const VkPipeline selected = pipeline();
     if (selected != m_frame->boundPipeline) {
         vkCmdBindPipeline(command, VK_PIPELINE_BIND_POINT_GRAPHICS, selected);
@@ -1221,6 +1309,8 @@ VkPipeline VulkanContext::pipeline()
     const VkFormat colorFormat = target.color ? target.color->format : VK_FORMAT_UNDEFINED;
     const VkFormat depthFormat = target.depth ? target.depth->format : VK_FORMAT_UNDEFINED;
     const auto samples = target.color ? target.color->samples : target.depth->samples;
+    if (m_pipelineSource)
+        return m_pipelineSource->pipeline(m_device, m_pipelineLayout, colorFormat, depthFormat, samples);
     const auto key = std::make_tuple(m_state.program, m_state.rasterizer, m_state.depth, m_state.blend, colorFormat,
                                      depthFormat, samples);
     const auto cached = m_pipelines.find(key);

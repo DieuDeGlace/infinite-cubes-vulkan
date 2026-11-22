@@ -57,8 +57,8 @@ protected:
     friend class Engine;
     friend class GLDrawing;
     friend class GLEngine;
-    friend class D3D9Engine;
-    friend class D3D9Drawing;
+    friend class VulkanEngine;
+    friend class VulkanDrawing;
     DiscreteAttribute<int> m_visibility;
     DiscreteAttribute<int> m_clipping;
     ContinuousAttribute<Vector<4, float>> m_fillColor;

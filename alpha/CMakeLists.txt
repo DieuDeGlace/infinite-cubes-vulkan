@@ -2,8 +2,8 @@ cmake_minimum_required(VERSION 3.20)
 project(InfiniteCubesAlpha LANGUAGES C CXX)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
-if(NOT WIN32 OR NOT CMAKE_SIZEOF_VOID_P EQUAL 4)
- message(FATAL_ERROR "Use a Windows x86 compiler (see README.md)")
+if(NOT WIN32 OR NOT CMAKE_SIZEOF_VOID_P EQUAL 8)
+ message(FATAL_ERROR "Use a Windows x64 compiler (see README.md)")
 endif()
 find_package(Python3 REQUIRED COMPONENTS Interpreter)
 execute_process(COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/cmake/ExpandSQLite.py"
@@ -112,6 +112,7 @@ target_include_directories(zlibstatic PUBLIC "${zlib_source_SOURCE_DIR}" "${zlib
 include(cmake/FreeImage.cmake)
 target_include_directories(FreeImage INTERFACE "${FI}/Source")
 target_compile_definitions(FreeImage INTERFACE FREEIMAGE_LIB)
+include(cmake/AlphaVulkan.cmake)
 add_executable(Cube WIN32
  src/abstr/Machine.cpp
  src/cube/widgets/AdaptionWidget.cpp
@@ -132,6 +133,7 @@ add_executable(Cube WIN32
  src/cube/widgets/EnchantWidget.cpp
  src/cube/Field.cpp
  src/Thread.cpp
+ src/cube/TownQuests.cpp
  src/cube/GameController.cpp
  src/cube/GameControllerMovement.cpp
  src/cube/GameControllerRender.cpp
@@ -179,10 +181,10 @@ add_executable(Cube WIN32
  plasma/src/plasma/Button.cpp
  plasma/src/plasma/ChunkStreamReader.cpp
  plasma/src/plasma/CurveShape.cpp
- plasma/src/plasma/D3D9Drawing.cpp
- plasma/src/plasma/D3D9Engine.cpp
- plasma/src/plasma/D3D9RenderSurface.cpp
- plasma/src/plasma/D3D9Texture.cpp
+ plasma/src/plasma/VulkanDrawing.cpp
+ plasma/src/plasma/VulkanEngine.cpp
+ plasma/src/plasma/VulkanRenderSurface.cpp
+ plasma/src/plasma/VulkanTexture.cpp
  plasma/src/plasma/Display.cpp
  plasma/src/plasma/Drawing.cpp
  plasma/src/plasma/Edit.cpp
@@ -222,7 +224,7 @@ if(CUBE_SCRIPTING)
 else()
  target_compile_definitions(Cube PRIVATE CUBE_SCRIPTING=0)
 endif()
-target_link_libraries(Cube PRIVATE pugixml sqlite zlibstatic d3d9 dinput8 dxguid winmm ws2_32 iphlpapi glu32 gdi32 ole32 shell32)
+target_link_libraries(Cube PRIVATE pugixml sqlite zlibstatic AlphaGraphics dinput8 dxguid winmm ws2_32 iphlpapi glu32 gdi32 ole32 shell32)
 add_executable(Server
  src/cube/Animation.cpp
  src/cube/CombatBehavior.cpp
@@ -259,7 +261,7 @@ add_executable(Server
 )
 target_include_directories(Server PRIVATE include plasma/include)
 target_compile_definitions(Server PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN _WIN32_WINNT=0x0601 _CRT_SECURE_NO_WARNINGS)
-target_link_libraries(Server PRIVATE pugixml sqlite zlibstatic d3d9 dinput8 dxguid winmm ws2_32 iphlpapi glu32 gdi32 ole32 shell32)
+target_link_libraries(Server PRIVATE pugixml sqlite zlibstatic AlphaGraphics dinput8 dxguid winmm ws2_32 iphlpapi glu32 gdi32 ole32 shell32)
 target_sources(Cube PRIVATE platform/FreeImageRuntime.cpp)
 target_compile_definitions(Server PRIVATE CUBE_SERVER)
 target_link_libraries(Cube PRIVATE freetype vorbisfile FreeImage)
@@ -276,7 +278,7 @@ foreach(app Cube Server)
   endif()
  endif()
 endforeach()
-include(cmake/Shaders.cmake)
+
 
 
 if(MINGW)

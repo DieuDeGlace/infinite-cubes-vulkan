@@ -1,5 +1,5 @@
 // Sprite loads and draws voxel models.
-#include <d3d9.h>
+#include "gfx/AlphaRenderDevice.h"
 #include <fstream>
 #include "cube/BytesIO.h"
 #include "cube/Database.h"
@@ -15,7 +15,7 @@ namespace cube {
 int Sprite::s_frame;
 plasma::Vector<3, unsigned char> Sprite::s_emptyVoxel;
 
-Sprite::Sprite(IDirect3DDevice9 *device, bool)
+Sprite::Sprite(AlphaRenderDevice *device, bool)
     : m_device(device)
 {
     m_voxels = nullptr;
@@ -385,8 +385,8 @@ void Sprite::updateMesh()
     m_vertexCount = (int)vertices.size();
     m_triangleCount = (int)(indices.size() / 3);
     if (!indices.empty() && !vertices.empty()) {
-        IDirect3DVertexBuffer9 *vertexBuffer;
-        IDirect3DIndexBuffer9 *indexBuffer;
+        AlphaBuffer *vertexBuffer;
+        AlphaBuffer *indexBuffer;
         m_device->CreateVertexBuffer((UINT)(m_vertexCount * sizeof(Vertex)), D3DUSAGE_WRITEONLY, 0, D3DPOOL_MANAGED,
                                      &vertexBuffer, 0);
         m_device->CreateIndexBuffer((UINT)(indices.size() * sizeof(unsigned short)), D3DUSAGE_WRITEONLY, D3DFMT_INDEX16,
@@ -399,8 +399,8 @@ void Sprite::updateMesh()
         indexBuffer->Lock(0, (UINT)(indices.size() * sizeof(unsigned short)), &data, 0);
         memcpy(data, &indices[0], indices.size() * sizeof(unsigned short));
         indexBuffer->Unlock();
-        IDirect3DVertexBuffer9 *oldVertexBuffer = m_vertexBuffer;
-        IDirect3DIndexBuffer9 *oldIndexBuffer = m_indexBuffer;
+        AlphaBuffer *oldVertexBuffer = m_vertexBuffer;
+        AlphaBuffer *oldIndexBuffer = m_indexBuffer;
         m_indexBuffer = indexBuffer;
         m_vertexBuffer = vertexBuffer;
         if (oldVertexBuffer)

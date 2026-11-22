@@ -1,50 +1,35 @@
-# Cube World Alpha
+# Cube World Alpha for Vulkan
 
-`Cube.exe` and `Server.exe` of the Cube World Alpha (2013-07-20), Windows x86.
+This is the original Infinite Cubes client for Cube World Alpha (2013-07-20), built for Windows x64. The game world and the embedded Plasma interface render through Vulkan 1.3. The dedicated Alpha server also builds for x64.
 
-## Requirements
+## Play on Windows
 
-- CMake 3.20 or newer
-- Python 3
-- One of:
-  - Linux: MinGW-w64 i686 GCC (`gcc-mingw-w64-i686`, `g++-mingw-w64-i686`) and Ninja
-  - Windows: Visual Studio 2022 with the C++ workload and the Windows SDK
-- Internet access at the first configure, which downloads zlib and FreeImage (pinned by SHA-256)
+**You must own Cube World Alpha and supply the game files from your own Alpha installation.** Use a separate copy of your Alpha folder for this port. It needs the following files alongside `Cube.exe`.
 
-## Build
+- `data1.db` through `data4.db` and `db.dat`
+- `resource1.dat`, `resource2.dat` and `logo.bmp`
+- The original Alpha `.plx` interface files
 
-MinGW (Linux):
+Launch `Cube.exe` with a Vulkan 1.3 graphics driver. The original sound engine requires XAudio2 2.7, available through the [DirectX End-User Runtime](https://www.microsoft.com/en-us/download/details.aspx?id=8109).
 
-```sh
-cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_TOOLCHAIN_FILE=cmake/mingw-i686.cmake
-cmake --build build
-```
+To continue an existing character and world, copy the entire original `Save` folder into this installation. Keep a backup before playing. Village requests save their progress and claimed rewards with the character. Talk to a villager marked with an orange exclamation point, follow the orange question mark to the enemy group, then return to collect the reward. Water uses the Steam port’s wave shading, depth-dependent absorption and refraction.
 
-Visual Studio 2022 (developer command prompt):
+For an Alpha multiplayer session, launch `Server.exe` from your Alpha data folder. The server listens on TCP port 12345. Enter `q` in its console to shut it down.
+
+## Build from source
+
+Use CMake 3.20 or newer, Python 3, and a Visual Studio 2022 x64 C++ toolchain with the Windows SDK. The first configuration fetches the pinned dependencies and a SPIR-V-capable shader compiler if needed. From the repository root, run
 
 ```bat
-cmake -S . -B build-msvc -G "Visual Studio 17 2022" -A Win32
-cmake --build build-msvc --config Release
+cmake -S alpha -B build-alpha -G "Visual Studio 17 2022" -A x64
+cmake --build build-alpha --config Release --target Cube Server
 ```
 
-Options:
+The client and server are built in `build-alpha/Release/`. CMake compiles the HLSL shaders to SPIR-V and embeds them in the client.
 
-| option | default | effect |
-| --- | --- | --- |
-| `-DCUBE_SCRIPTING=OFF` | `ON` | leave out the interface script engine (abstr::Machine and cube::System); the game then skips the script check of `db.dat` at start |
-| `-DREBUILD_SHADERS=ON` / `OFF` | `ON` when fxc is found | compile the HLSL with fxc / use the checked-in shader bytecode |
-| `-DFXC_EXECUTABLE=PATH` | | the fxc to use |
+For Linux cross-compilation, install Ninja and the x86_64 MinGW-w64 POSIX C and C++ compilers, then run
 
-Output: `build/Cube.exe` and `build/Server.exe` (or `build-msvc/Release/`).
-
-## Run
-
-Copy the data from your own installation next to the executables:
-- `data1.db` to `data4.db`, `db.dat`, `resource1.dat`, `resource2.dat`, `logo.bmp`;
-- the `.plx` files.
-
-Then create an empty `Save/` directory. `Server.exe` listens on TCP port 12345 and stops on `q`.
-
-The game runs on Windows 7 and later. Like the original, its sound uses XAudio2 2.7 from the
-[DirectX End-User Runtime](https://www.microsoft.com/en-us/download/details.aspx?id=8109) (June 2010), which
-Windows does not include: without it, the game reports that XAudio2 could not be initialized and exits.
+```sh
+cmake -S alpha -B build-alpha -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_TOOLCHAIN_FILE=../release/cmake/mingw-x86_64.cmake
+cmake --build build-alpha --target Cube Server
+```

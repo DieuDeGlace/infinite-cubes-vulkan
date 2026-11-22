@@ -1,4 +1,4 @@
-// Engine owns scene objects, lists of shapes, widgets, transformations, displays, nodes and textures, plus root nodes, fonts and input state. D3D9Engine implements its graphics interface.
+// Engine owns scene objects, lists of shapes, widgets, transformations, displays, nodes and textures, plus root nodes, fonts and input state. VulkanEngine implements its graphics interface.
 #pragma once
 #include <windows.h>
 #include <list>
@@ -92,7 +92,7 @@ public:
     virtual void frameRectangle(const Vector<2, float> &position, const Vector<2, float> &size,
                                 const Vector<4, float> &color)
     {}
-    // The base graphics hooks do nothing; D3D9Engine overrides them.
+    // The base graphics hooks do nothing; VulkanEngine overrides them.
     virtual void pushIdentityMatrix() {}
     virtual void popMatrix() {}
     virtual void enableTexture2D() {}
@@ -109,7 +109,7 @@ public:
     virtual void endWindowDrawing() = 0;
     virtual void pushNodeMatrix(Node *node) = 0;
     virtual void popNodeMatrix(Node *node) = 0;
-    // And 24: pure here, empty in D3D9Engine, never called.
+    // And 24: pure here, empty in VulkanEngine, never called.
     virtual void unused23(Node *node) = 0;
     virtual void unused24(Node *node) = 0;
     virtual void beginSurface(RenderSurface *surface, const Vector<2, float> &position, const Vector<2, float> &size,
@@ -294,7 +294,7 @@ public:
     void setPopUpWidget(Widget *widget, Widget *anchor);
     Texture *findTexture(int id);
 
-    // The surface stack (pushed and popped by D3D9Engine).
+    // The surface stack (pushed and popped by VulkanEngine).
     void pushSurface(RenderSurface *surface);
     RenderSurface *popSurface();
     void beginOffscreenDrawing(float scale);
@@ -313,14 +313,14 @@ public:
     bool usesWidgetSurfaces() const { return (m_renderFlags & (1 << RENDER_CLIP_WIDGET_SURFACES)) != 0; }
     // Blurred displays are blurred (Node::draw).
     bool usesBlur() const { return (m_renderFlags >> RENDER_BLUR) & 1; }
-    // Each drawing gets its own depth layer (D3D9Drawing::draw); window drawing clears the depth and
+    // Each drawing gets its own depth layer (VulkanDrawing::draw); window drawing clears the depth and
     // stencil buffers first.
     bool usesDepthLayers() const { return (m_renderFlags >> RENDER_DEPTH_LAYERS) & 1; }
 
 protected:
     friend class SmoothMeshShape;
     friend class Texture;
-    friend class D3D9Drawing;
+    friend class VulkanDrawing;
     friend class Font;
     friend class Widget;
     friend class Button;

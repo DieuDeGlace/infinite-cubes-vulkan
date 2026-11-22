@@ -1,5 +1,5 @@
-#include "plasma/D3D9Drawing.h"
-#include "plasma/D3D9Engine.h"
+#include "plasma/VulkanDrawing.h"
+#include "plasma/VulkanEngine.h"
 #include "plasma/D3D9Vertex.h"
 #include "plasma/Display.h"
 #include "plasma/Node.h"
@@ -11,7 +11,7 @@
 
 namespace plasma {
 
-D3D9Drawing::D3D9Drawing(D3D9Engine *engine)
+VulkanDrawing::VulkanDrawing(VulkanEngine *engine)
     : m_engine(engine),
       m_vertexBuffer(0),
       m_indexBuffer(0),
@@ -21,7 +21,7 @@ D3D9Drawing::D3D9Drawing(D3D9Engine *engine)
     m_engine->m_drawings.push_back(this);
 }
 
-D3D9Drawing::~D3D9Drawing()
+VulkanDrawing::~VulkanDrawing()
 {
     if (m_vertexBuffer)
         m_vertexBuffer->Release();
@@ -35,7 +35,7 @@ D3D9Drawing::~D3D9Drawing()
         m_engine->m_drawings.remove(this);
 }
 
-void D3D9Drawing::releaseDeviceResources()
+void VulkanDrawing::releaseDeviceResources()
 {
     if (m_vertexBuffer) {
         m_vertexBuffer->Release();
@@ -47,7 +47,7 @@ void D3D9Drawing::releaseDeviceResources()
     }
 }
 
-void D3D9Drawing::draw(Node *node, const Vector<4, float> &color)
+void VulkanDrawing::draw(Node *node, const Vector<4, float> &color)
 {
     if (!m_vertexBuffer)
         return;
@@ -171,7 +171,7 @@ void D3D9Drawing::draw(Node *node, const Vector<4, float> &color)
     m_engine->m_device->SetRenderState(D3DRS_ZENABLE, FALSE);
 }
 
-void D3D9Drawing::restoreDeviceResources()
+void VulkanDrawing::restoreDeviceResources()
 {
     if (m_vertexData && !m_vertexBuffer) {
         m_engine->m_device->CreateVertexBuffer((UINT)(m_vertices.size() * sizeof(D3D9Vertex)),
@@ -193,7 +193,7 @@ void D3D9Drawing::restoreDeviceResources()
     }
 }
 
-void D3D9Drawing::update()
+void VulkanDrawing::update()
 {
     Drawing::update();
     if (m_dirty & ((1 << DRAWING_DIRTY_VERTICES) | (1 << DRAWING_DIRTY_INDICES)))

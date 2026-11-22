@@ -1,12 +1,6 @@
 // CubeShader manages Direct3D 9 shaders and their constants.
 #include "cube/CubeShader.h"
 // Shader headers are generated from the HLSL sources listed in shaders.json.
-#include "cube/shaders/WorldVertexShader.h"
-#include "cube/shaders/WorldPixelShader.h"
-#include "cube/shaders/SkyPixelShader.h"
-#include "cube/shaders/WaterPixelShader.h"
-#include "cube/shaders/UnusedPixelShader.h"
-#include "cube/shaders/CloudPixelShader.h"
 
 namespace cube {
 using plasma::Matrix;
@@ -26,7 +20,7 @@ struct ShaderColor {
     operator const float *() const { return &r; }
 };
 
-CubeShader::CubeShader(IDirect3DDevice9 *device)
+CubeShader::CubeShader(AlphaRenderDevice *device)
     : m_device(device)
 {
     m_vertexShader = 0;
@@ -92,9 +86,9 @@ bool CubeShader::initialize()
     D3DVERTEXELEMENT9 elements[] = {{0, 0, D3DDECLTYPE_UBYTE4, D3DDECLMETHOD_DEFAULT, D3DDECLUSAGE_POSITION, 0},
                                     {0, 4, D3DDECLTYPE_D3DCOLOR, D3DDECLMETHOD_DEFAULT, D3DDECLUSAGE_COLOR, 0},
                                     D3DDECL_END()};
-    if (m_device->CreateVertexDeclaration(elements, &m_vertexDeclaration) != D3D_OK)
+    if (m_device->CreateVertexDeclaration(elements, &m_vertexDeclaration) != S_OK)
         return false;
-    if (m_device->CreateVertexShader(worldVertexShader, &m_vertexShader) != D3D_OK)
+    if (m_device->CreateVertexShader(AlphaShaderId::WorldVertexShader, &m_vertexShader) != S_OK)
         return false;
     m_pointLightPositions = 0;
     m_skyColor1 = 0;
@@ -116,15 +110,15 @@ bool CubeShader::initialize()
     m_fogColor = 2;
     m_shininess = 4;
     m_alpha = 3;
-    if (m_device->CreatePixelShader(worldPixelShader, &m_pixelShader) != D3D_OK)
+    if (m_device->CreatePixelShader(AlphaShaderId::WorldPixelShader, &m_pixelShader) != S_OK)
         return false;
-    if (m_device->CreatePixelShader(skyPixelShader, &m_skyPixelShader) != D3D_OK)
+    if (m_device->CreatePixelShader(AlphaShaderId::SkyPixelShader, &m_skyPixelShader) != S_OK)
         return false;
-    if (m_device->CreatePixelShader(cloudPixelShader, &m_cloudPixelShader) != D3D_OK)
+    if (m_device->CreatePixelShader(AlphaShaderId::CloudPixelShader, &m_cloudPixelShader) != S_OK)
         return false;
-    if (m_device->CreatePixelShader(waterPixelShader, &m_waterPixelShader) != D3D_OK)
+    if (m_device->CreatePixelShader(AlphaShaderId::WaterPixelShader, &m_waterPixelShader) != S_OK)
         return false;
-    if (m_device->CreatePixelShader(unusedPixelShader, &m_unusedPixelShader) != D3D_OK)
+    if (m_device->CreatePixelShader(AlphaShaderId::UnusedPixelShader, &m_unusedPixelShader) != S_OK)
         return false;
     return true;
 }

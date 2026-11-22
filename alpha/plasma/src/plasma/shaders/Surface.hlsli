@@ -3,7 +3,8 @@
 #ifndef SURFACE_HLSLI
 #define SURFACE_HLSLI
 
-sampler2D textureSampler : register(s0);
+[[vk::binding(0, 1)]] Texture2D<float4> textureSampler;
+[[vk::binding(6, 1)]] SamplerState textureSamplerState;
 
 // A render surface holds premultiplied colour: divide it out where the texel is not transparent.
 float4 unpremultiplied(float4 color)

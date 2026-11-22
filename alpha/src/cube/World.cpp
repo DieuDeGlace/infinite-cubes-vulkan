@@ -29,7 +29,7 @@ const int DefaultWorldSeed = 123;
 const int PetFoodSubtypeCount = 156;
 }
 
-World::World(IDirect3DDevice9 *device, bool client)
+World::World(AlphaRenderDevice *device, bool client)
     : m_spriteManager(device),
       m_debugFlags(0),
       m_client(client),

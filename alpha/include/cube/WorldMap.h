@@ -11,9 +11,10 @@
 #include "cube/BytesIO.h"
 #include "cube/Region.h"
 #include "cube/Sprite.h"
+#include "gfx/QuestMarker.h"
 #include "cube/World.h"
 
-struct IDirect3DDevice9;
+struct AlphaRenderDevice;
 
 namespace cube {
 
@@ -73,7 +74,7 @@ struct MapRegion {
 
 class WorldMap {
 public:
-    WorldMap(IDirect3DDevice9 *device, World *world, CubeShader *shader);
+    WorldMap(AlphaRenderDevice *device, World *world, CubeShader *shader);
     virtual ~WorldMap();
 
     void enterRegions();
@@ -126,6 +127,7 @@ public:
     // blocks); markers and signs are drawn with them, and MapOverlayWidget places its labels with
     // them.
     plasma::Matrix<float> m_projection;
+    std::vector<gfx::QuestMarker> m_townQuestMarkers;
     plasma::Matrix<float> m_view;
     // Point 300 blocks from the player away from the world center, relative to the last map center,
     // with zero z.
@@ -133,7 +135,7 @@ public:
     plasma::Vector<2, int> m_hoveredZone;  // (-1, -1)
     plasma::Vector<2, int> m_selectedZone; // (-1, -1)
     bool m_canTeleport;
-    IDirect3DDevice9 *m_device;
+    AlphaRenderDevice *m_device;
     CubeShader *m_shader; // the constructor's third argument (GameController's shader)
     World *m_world;
     MapRegion *m_regions[1024][1024];       // owned, by region (x, y)

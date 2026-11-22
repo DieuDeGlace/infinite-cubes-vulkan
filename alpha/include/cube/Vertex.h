@@ -1,5 +1,5 @@
 #pragma once
-#include <d3d9.h>
+#include "gfx/AlphaRenderDevice.h"
 #include "plasma/Vector.h"
 // The client mesh helpers use the default blocks.
 #include "cube/DefaultBlocks.h"

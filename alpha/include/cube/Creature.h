@@ -1,6 +1,7 @@
 // Creature represents a world creature, including the player. It stores network entity state,
 // Appearance, inventory, pathfinding and animation state. Unidentified state remains opaque.
 #pragma once
+#include "cube/TownQuest.h"
 #include <winsock2.h>
 #include "cube/SkillIds.h"
 #include <list>
@@ -386,6 +387,7 @@ public:
     struct PlayerData : CharacterStyle {
         typedef std::map<std::pair<int, std::string>, plasma::Vector<3, Fixed>> WorldPositions;
         PlayerData() {}
+        std::vector<TownQuest> townQuests;
 
         std::list<Item> knownFormulas; // known formulas
         WorldPositions worldPositions; // Saved world positions.

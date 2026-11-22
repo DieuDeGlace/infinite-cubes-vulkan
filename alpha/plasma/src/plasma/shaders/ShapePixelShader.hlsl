@@ -1,3 +1,11 @@
+[[vk::binding(0, 0)]] cbuffer Constants {
+    float filter : packoffset(c40);
+    float textureOpacity : packoffset(c41);
+    float textureBrightness : packoffset(c42);
+    float textureContrast : packoffset(c43);
+    float textureSaturation : packoffset(c44);
+    bool textureEnabled : packoffset(c46);
+};
 // The pixel shader of shapes and widgets (m_shapePixelShader), ported from the 2012 engine's GLSL
 // shape shader. The vertex colour, optionally textured (saturation, brightness and contrast
 // adjustments, then blended in by textureOpacity), then filtered by the mask texture: filter 0
@@ -6,20 +14,16 @@
 // Registers as D3D9Engine::setupShadersAndFrameBuffer sets them (m_textureEnabledRegister 0,
 // m_filterRegister 0.. m_textureSaturationRegister 4); the samplers are bound explicitly. The grey
 // of the saturation is the luminance with the weights 0.3, 0.59 and 0.11.
-sampler2D maskSampler : register(s0);
-sampler2D textureSampler : register(s1);
-bool textureEnabled;
-int filter;
-float textureOpacity;
-float textureBrightness;
-float textureContrast;
-float textureSaturation;
+[[vk::binding(0, 1)]] Texture2D<float4> maskSampler;
+[[vk::binding(6, 1)]] SamplerState maskSamplerState;
+[[vk::binding(1, 1)]] Texture2D<float4> textureSampler;
+[[vk::binding(7, 1)]] SamplerState textureSamplerState;
 
-float4 main(float4 color : COLOR0, float2 maskCoord : TEXCOORD0, float2 texCoord : TEXCOORD1) : COLOR0
+float4 main([[vk::location(0)]] float4 color : COLOR0, [[vk::location(1)]] float2 maskCoord : TEXCOORD0, [[vk::location(2)]] float2 texCoord : TEXCOORD1) : SV_Target
 {
     float4 shapeColor;
     if (textureEnabled) {
-        float4 texColor = tex2D(textureSampler, texCoord);
+        float4 texColor = textureSampler.Sample(textureSamplerState, texCoord);
         if (textureSaturation != 1.0) {
             float3 weights = float3(0.3, 0.59, 0.11);
             float3 gray = dot(weights, texColor.xyz);
@@ -37,7 +41,7 @@ float4 main(float4 color : COLOR0, float2 maskCoord : TEXCOORD0, float2 texCoord
     }
     if (filter == 0)
         return shapeColor;
-    float4 mask = tex2D(maskSampler, maskCoord);
+    float4 mask = maskSampler.Sample(maskSamplerState, maskCoord);
     if (mask.a > 0)
         mask.xyz *= 1.0 / mask.a;
     if (filter == 1)
