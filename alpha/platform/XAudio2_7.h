@@ -3,11 +3,14 @@
 // later wherever that runtime is installed, and links no XAudio2 library. Current Windows SDKs only declare
 // the later, incompatible interface (XAudio2 2.8+, Windows 8+), so this header declares the 2.7 one: every
 // interface lists all of its methods in vtable order, as the 2.7 runtime expects. The structures are the
-// SDK's; their natural x86 layout equals the SDK's packed one for every structure the game passes.
+// SDK's, packed to 1 byte as the SDK packs them: on x64 the natural layout would move the pointers after a
+// 32-bit field (the send and effect lists, a buffer's context) and SamplesPlayed.
 #pragma once
 #include <windows.h>
 #include <objbase.h>
 #include <mmreg.h>
+
+#pragma pack(push, 1)
 
 // Engine flags and limits used with this interface.
 #define XAUDIO2_COMMIT_NOW 0
@@ -259,3 +262,5 @@ inline HRESULT XAudio2Create(IXAudio2 **xaudio2, UINT32 flags = 0,
     }
     return result;
 }
+
+#pragma pack(pop)

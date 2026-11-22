@@ -4,15 +4,23 @@
 #include "cube/XAudio2Engine.h"
 #include "cube/BytesIO.h"
 #include "cube/Database.h"
+#include <algorithm>
+#include <fstream>
+#include <iterator>
+#include <memory>
 
 namespace cube {
 
-enum ChunkId {
-    fourccRIFF = 'FFIR',
-    fourccDATA = 'atad',
-    fourccFMT = ' tmf',
-    fourccWAVE = 'EVAW'
-};
+// RIFF chunk ids as the little-endian DWORDs read from a file ("RIFF", "data", "fmt ", "WAVE").
+constexpr DWORD fourcc(char a, char b, char c, char d)
+{
+    return DWORD(BYTE(a)) | DWORD(BYTE(b)) << 8 | DWORD(BYTE(c)) << 16 | DWORD(BYTE(d)) << 24;
+}
+constexpr DWORD fourccRIFF = fourcc('R', 'I', 'F', 'F');
+constexpr DWORD fourccDATA = fourcc('d', 'a', 't', 'a');
+constexpr DWORD fourccFMT = fourcc('f', 'm', 't', ' ');
+constexpr DWORD fourccWAVE = fourcc('W', 'A', 'V', 'E');
+static_assert(fourccRIFF == 0x46464952 && fourccWAVE == 0x45564157, "RIFF ids are little-endian");
 
 Music::Music(IXAudio2 *xaudio2)
     : m_xaudio2(xaudio2),
@@ -39,7 +47,10 @@ XAudio2Engine::XAudio2Engine()
 
 XAudio2Engine::~XAudio2Engine()
 {
-    cleanUp();
+    // Every voice goes before the sounds and music buffers it may still be reading.
+    for (IXAudio2SourceVoice *voice : m_voices)
+        voice->DestroyVoice();
+    m_voices.clear();
     for (std::map<int, Sound *>::iterator it = m_sounds.begin(); it != m_sounds.end(); ++it)
         delete it->second;
     delete m_music;
@@ -51,119 +62,43 @@ XAudio2Engine::~XAudio2Engine()
     delete m_database;
 }
 
-// Finds the chunk fourcc in the RIFF data of stream: its size and the offset of its data.
-HRESULT FindChunk(BytesIO &stream, DWORD fourcc, DWORD &dwChunkSize, DWORD &dwChunkDataPosition)
+namespace {
+// Reads a RIFF/WAVE sound's format and samples, walking its chunks as the original loader did (without
+// padding odd chunks). False for anything else, or for a chunk that runs past the data.
+bool parseWave(const std::vector<char> &bytes, XAudio2Engine::Sound &sound)
 {
-    stream.m_offset = 0;
-
-    DWORD dwChunkType;
-    DWORD dwChunkDataSize;
-    DWORD dwRIFFDataSize = 0;
-    DWORD bytesRead = 0;
-    DWORD dwOffset = 0;
-
-    while (!stream.atEnd()) {
-        // Both stay uninitialized when the data ends early.
-        stream.read(&dwChunkType, sizeof(DWORD));
-        stream.read(&dwChunkDataSize, sizeof(DWORD));
-
-        switch (dwChunkType) {
-        case fourccRIFF:
-            dwRIFFDataSize = dwChunkDataSize;
-            dwChunkDataSize = 4;
-            stream.skip(sizeof(DWORD));
-            break;
-
-        default:
-            stream.m_offset += dwChunkDataSize;
+    const size_t size = bytes.size();
+    const auto dword = [&bytes](size_t at) {
+        DWORD value;
+        memcpy(&value, &bytes[at], sizeof(value));
+        return value;
+    };
+    if (size < 12 || dword(0) != fourccRIFF || dword(8) != fourccWAVE)
+        return false;
+    bool format = false, samples = false;
+    for (size_t at = 12; at + 8 <= size;) {
+        const DWORD id = dword(at), length = dword(at + 4);
+        const size_t body = at + 8;
+        if (length > size - body)
+            return false;
+        if (id == fourccFMT && length >= 16) { // a PCM format chunk may leave out cbSize
+            memset(&sound.format, 0, sizeof(sound.format));
+            memcpy(&sound.format, &bytes[body], std::min<size_t>(length, sizeof(sound.format)));
+            format = true;
+        } else if (id == fourccDATA) {
+            sound.data.assign(bytes.begin() + body, bytes.begin() + body + length);
+            samples = true;
         }
-
-        dwOffset += sizeof(DWORD) * 2;
-
-        if (dwChunkType == fourcc) {
-            dwChunkSize = dwChunkDataSize;
-            dwChunkDataPosition = dwOffset;
-            return S_OK;
-        }
-
-        dwOffset += dwChunkDataSize;
-
-        if (bytesRead >= dwRIFFDataSize)
-            return S_FALSE;
+        at = body + length;
     }
-
-    return S_OK;
+    if (!format || !samples)
+        return false;
+    memset(&sound.buffer, 0, sizeof(sound.buffer));
+    sound.buffer.AudioBytes = UINT32(sound.data.size());
+    sound.buffer.pAudioData = sound.data.data();
+    sound.buffer.Flags = XAUDIO2_END_OF_STREAM;
+    return true;
 }
-
-HRESULT FindChunk(HANDLE hFile, DWORD fourcc, DWORD &dwChunkSize, DWORD &dwChunkDataPosition)
-{
-    HRESULT hr = S_OK;
-    if (INVALID_SET_FILE_POINTER == SetFilePointer(hFile, 0, NULL, FILE_BEGIN))
-        return HRESULT_FROM_WIN32(GetLastError());
-
-    DWORD dwChunkType;
-    DWORD dwChunkDataSize;
-    DWORD dwRIFFDataSize = 0;
-    DWORD dwFileType;
-    DWORD bytesRead = 0;
-    DWORD dwOffset = 0;
-
-    while (hr == S_OK) {
-        DWORD dwRead;
-        if (0 == ReadFile(hFile, &dwChunkType, sizeof(DWORD), &dwRead, NULL))
-            hr = HRESULT_FROM_WIN32(GetLastError());
-
-        if (0 == ReadFile(hFile, &dwChunkDataSize, sizeof(DWORD), &dwRead, NULL))
-            hr = HRESULT_FROM_WIN32(GetLastError());
-
-        switch (dwChunkType) {
-        case fourccRIFF:
-            dwRIFFDataSize = dwChunkDataSize;
-            dwChunkDataSize = 4;
-            if (0 == ReadFile(hFile, &dwFileType, sizeof(DWORD), &dwRead, NULL))
-                hr = HRESULT_FROM_WIN32(GetLastError());
-            break;
-
-        default:
-            if (INVALID_SET_FILE_POINTER == SetFilePointer(hFile, dwChunkDataSize, NULL, FILE_CURRENT))
-                return HRESULT_FROM_WIN32(GetLastError());
-        }
-
-        dwOffset += sizeof(DWORD) * 2;
-
-        if (dwChunkType == fourcc) {
-            dwChunkSize = dwChunkDataSize;
-            dwChunkDataPosition = dwOffset;
-            return S_OK;
-        }
-
-        dwOffset += dwChunkDataSize;
-
-        if (bytesRead >= dwRIFFDataSize)
-            return S_FALSE;
-    }
-
-    return S_OK;
-}
-
-HRESULT ReadChunkData(BytesIO &stream, void *buffer, DWORD buffersize, DWORD bufferoffset)
-{
-    if (bufferoffset + buffersize > stream.m_data.size())
-        return S_FALSE;
-    stream.m_offset = bufferoffset;
-    stream.read(buffer, buffersize);
-    return S_OK;
-}
-
-HRESULT ReadChunkData(HANDLE hFile, void *buffer, DWORD buffersize, DWORD bufferoffset)
-{
-    HRESULT hr = S_OK;
-    if (INVALID_SET_FILE_POINTER == SetFilePointer(hFile, bufferoffset, NULL, FILE_BEGIN))
-        return HRESULT_FROM_WIN32(GetLastError());
-    DWORD dwRead;
-    if (0 == ReadFile(hFile, buffer, buffersize, &dwRead, NULL))
-        hr = HRESULT_FROM_WIN32(GetLastError());
-    return hr;
 }
 
 void XAudio2Engine::cleanUp()
@@ -206,7 +141,9 @@ void XAudio2Engine::play(int sound, float volume, float pan, float frequencyRati
     Sound *cachedSound = m_sounds[sound];
     if (cachedSound) {
         IXAudio2SourceVoice *voice = 0;
-        m_xaudio2->CreateSourceVoice(&voice, &cachedSound->format.Format);
+        // A sound whose format the engine refuses (damaged or unreadable data) stays silent.
+        if (FAILED(m_xaudio2->CreateSourceVoice(&voice, &cachedSound->format.Format)) || !voice)
+            return;
         voice->SetVolume(volume);
         voice->SubmitSourceBuffer(&cachedSound->buffer);
         voice->Start(0);
@@ -221,14 +158,17 @@ bool Music::playFile(const std::string &fileName, bool loop)
     if (m_voice) {
         stop();
         m_voice->DestroyVoice();
+        m_voice = 0; // a file that fails below leaves no destroyed voice for stop() or update()
     }
 
     FILE *file = fopen(fileName.c_str(), "rb");
     if (!file)
         return false;
 
-    if (ov_open(file, &m_vorbisFile, NULL, 0) < 0)
+    if (ov_open(file, &m_vorbisFile, NULL, 0) < 0) {
+        fclose(file); // the stream takes the file only when it opens
         return false;
+    }
 
     vorbis_info *info = ov_info(&m_vorbisFile, -1);
 
@@ -254,8 +194,10 @@ bool Music::playFile(const std::string &fileName, bool loop)
         position += read;
     }
 
-    if (FAILED(m_xaudio2->CreateSourceVoice(&m_voice, &format)))
+    if (FAILED(m_xaudio2->CreateSourceVoice(&m_voice, &format))) {
+        m_voice = 0;
         return false;
+    }
 
     XAUDIO2_BUFFER buffer = {0};
     buffer.pAudioData = m_buffers[m_bufferIndex];
@@ -300,63 +242,25 @@ int XAudio2Engine::soundId(const std::string &name)
     if (found != m_soundIds.end() && found->second != 0)
         return found->second;
 
-    DWORD dwChunkSize;
-    DWORD dwChunkPosition;
-
+    // From data2.db (scrambled), or else from a file of that name.
+    std::vector<char> bytes;
     if (m_database) {
         BytesIO stream;
-        if (m_database->read(name, stream) && !stream.m_data.empty()) {
-            stream.descramble();
-            FindChunk(stream, fourccRIFF, dwChunkSize, dwChunkPosition);
-            DWORD filetype = 0;
-            ReadChunkData(stream, &filetype, sizeof(DWORD), dwChunkPosition);
-            if (filetype == fourccWAVE) {
-                Sound *sound = new Sound;
-                FindChunk(stream, fourccFMT, dwChunkSize, dwChunkPosition);
-                memset(&sound->format, 0, sizeof(sound->format));
-                ReadChunkData(stream, &sound->format, dwChunkSize, dwChunkPosition);
-                FindChunk(stream, fourccDATA, dwChunkSize, dwChunkPosition);
-                BYTE *pDataBuffer = new BYTE[dwChunkSize];
-                ReadChunkData(stream, pDataBuffer, dwChunkSize, dwChunkPosition);
-                memset(&sound->buffer, 0, sizeof(sound->buffer));
-                sound->buffer.AudioBytes = dwChunkSize;
-                sound->buffer.pAudioData = pDataBuffer;
-                sound->buffer.Flags = XAUDIO2_END_OF_STREAM;
-                m_lastSoundId++;
-                m_soundIds[name] = m_lastSoundId;
-                m_sounds[m_lastSoundId] = sound;
-                return m_lastSoundId;
-            }
-        }
-        return 0;
+        if (!m_database->read(name, stream) || stream.m_data.empty())
+            return 0;
+        stream.descramble();
+        bytes = std::move(stream.m_data);
     } else {
-        std::wstring fileName(name.begin(), name.end());
-        HANDLE hFile = CreateFileW(fileName.c_str(), GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, 0, NULL);
-        if (hFile != INVALID_HANDLE_VALUE && SetFilePointer(hFile, 0, NULL, FILE_BEGIN) != INVALID_SET_FILE_POINTER) {
-            FindChunk(hFile, fourccRIFF, dwChunkSize, dwChunkPosition);
-            DWORD filetype;
-            ReadChunkData(hFile, &filetype, sizeof(DWORD), dwChunkPosition);
-            if (filetype == fourccWAVE) {
-                Sound *sound = new Sound;
-                FindChunk(hFile, fourccFMT, dwChunkSize, dwChunkPosition);
-                memset(&sound->format, 0, sizeof(sound->format));
-                ReadChunkData(hFile, &sound->format, dwChunkSize, dwChunkPosition);
-                FindChunk(hFile, fourccDATA, dwChunkSize, dwChunkPosition);
-                BYTE *pDataBuffer = new BYTE[dwChunkSize];
-                ReadChunkData(hFile, pDataBuffer, dwChunkSize, dwChunkPosition);
-                memset(&sound->buffer, 0, sizeof(sound->buffer));
-                sound->buffer.AudioBytes = dwChunkSize;
-                sound->buffer.pAudioData = pDataBuffer;
-                sound->buffer.Flags = XAUDIO2_END_OF_STREAM;
-                CloseHandle(hFile);
-                m_lastSoundId++;
-                m_soundIds[name] = m_lastSoundId;
-                m_sounds[m_lastSoundId] = sound;
-                return m_lastSoundId;
-            }
-        }
-        return 0;
+        std::ifstream file(name, std::ios::binary);
+        bytes.assign(std::istreambuf_iterator<char>(file), std::istreambuf_iterator<char>());
     }
+    auto sound = std::make_unique<Sound>();
+    if (!parseWave(bytes, *sound))
+        return 0;
+    m_lastSoundId++;
+    m_soundIds[name] = m_lastSoundId;
+    m_sounds[m_lastSoundId] = sound.release();
+    return m_lastSoundId;
 }
 
 void XAudio2Engine::stopMusic()

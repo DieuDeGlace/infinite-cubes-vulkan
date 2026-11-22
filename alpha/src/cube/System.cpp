@@ -2,6 +2,8 @@
 #include <stdio.h>
 #include <string.h>
 #include <fstream>
+#include <algorithm>
+#include <iterator>
 #include <sstream>
 #include "abstr/Method.h"
 #include "cube/System.h"
@@ -168,6 +170,13 @@ System::System(bool test)
     m_machine.callFunction("test", test);
 }
 
+System::~System()
+{
+    for (HANDLE handle : m_files)
+        if (handle != INVALID_HANDLE_VALUE)
+            CloseHandle(handle);
+}
+
 void MD5::Final()
 {
     unsigned char bits[8];
@@ -329,26 +338,31 @@ void MD5::Update(unsigned char *input, unsigned int inputLen)
 
 void System::appendInt(int buffer, int value)
 {
-    std::vector<char> &data = *(std::vector<char> *)buffer;
-    size_t size = data.size();
-    data.resize(size + sizeof(int));
-    *(int *)&data[size] = value;
+    if (std::vector<char> *data = this->buffer(buffer)) {
+        const size_t size = data->size();
+        data->resize(size + sizeof(int));
+        memcpy(&(*data)[size], &value, sizeof(int));
+    }
 }
 
 int System::bufferSize(int buffer)
 {
-    return ((std::vector<char> *)buffer)->size();
+    const std::vector<char> *data = this->buffer(buffer);
+    return data ? int(data->size()) : 0;
 }
 
 std::string System::bufferString(int buffer)
 {
-    std::vector<char> &data = *(std::vector<char> *)buffer;
-    return std::string(data.begin(), data.end());
+    const std::vector<char> *data = this->buffer(buffer);
+    return data ? std::string(data->begin(), data->end()) : std::string();
 }
 
 void System::closeFile(int file)
 {
-    CloseHandle((HANDLE)file);
+    if (file > 0 && file <= int(m_files.size()) && m_files[file - 1] != INVALID_HANDLE_VALUE) {
+        CloseHandle(m_files[file - 1]);
+        m_files[file - 1] = INVALID_HANDLE_VALUE;
+    }
 }
 
 std::string System::concatenate(std::string first, std::string second)
@@ -358,18 +372,17 @@ std::string System::concatenate(std::string first, std::string second)
 
 void System::deleteBuffer(int buffer)
 {
-    std::vector<char> *data = (std::vector<char> *)buffer;
-    m_buffers.remove(data);
-    delete data;
+    if (buffer > 0 && buffer <= int(m_buffers.size()))
+        m_buffers[buffer - 1].reset();
 }
 
 std::string System::bufferHash(int buffer)
 {
-    std::vector<char> &data = *(std::vector<char> *)buffer;
-    MD5 md5;
-    if (data.empty())
+    std::vector<char> *data = this->buffer(buffer);
+    if (!data || data->empty())
         return "";
-    return md5.digestMemory((unsigned char *)&data[0], data.size());
+    MD5 md5;
+    return md5.digestMemory(reinterpret_cast<unsigned char *>(data->data()), unsigned(data->size()));
 }
 
 char *MD5::digestFile(char *filename)
@@ -407,12 +420,14 @@ std::string System::stringHash(std::string text)
 
 int System::adapterAddressByte(int adapter, int index)
 {
-    return ((IP_ADAPTER_INFO *)adapter)->Address[index];
+    const IP_ADAPTER_INFO *record = this->adapter(adapter);
+    return record && index >= 0 && index < MAX_ADAPTER_ADDRESS_LENGTH ? record->Address[index] : 0;
 }
 
 int System::adapterType(int adapter)
 {
-    return ((IP_ADAPTER_INFO *)adapter)->Type;
+    const IP_ADAPTER_INFO *record = this->adapter(adapter);
+    return record ? int(record->Type) : 0;
 }
 
 int System::readAdapters()
@@ -423,59 +438,53 @@ int System::readAdapters()
 
 int System::bufferByte(int buffer, int index)
 {
-    return (unsigned char)(*(std::vector<char> *)buffer)[index];
+    const std::vector<char> *data = this->buffer(buffer);
+    return data && index >= 0 && index < int(data->size()) ? (unsigned char)(*data)[index] : 0;
 }
 
 int System::creationTimeHigh(int file)
 {
-    FILETIME time;
-    GetFileTime((HANDLE)file, &time, NULL, NULL);
-    return time.dwHighDateTime;
+    return int(fileTime(file, 0).dwHighDateTime);
 }
 
 int System::creationTimeLow(int file)
 {
-    FILETIME time;
-    GetFileTime((HANDLE)file, &time, NULL, NULL);
-    return time.dwLowDateTime;
+    return int(fileTime(file, 0).dwLowDateTime);
 }
 
 int System::accessTimeHigh(int file)
 {
-    FILETIME time;
-    GetFileTime((HANDLE)file, NULL, &time, NULL);
-    return time.dwHighDateTime;
+    return int(fileTime(file, 1).dwHighDateTime);
 }
 
 int System::accessTimeLow(int file)
 {
-    FILETIME time;
-    GetFileTime((HANDLE)file, NULL, &time, NULL);
-    return time.dwLowDateTime;
+    return int(fileTime(file, 1).dwLowDateTime);
 }
 
 int System::writeTimeHigh(int file)
 {
-    FILETIME time;
-    GetFileTime((HANDLE)file, NULL, NULL, &time);
-    return time.dwHighDateTime;
+    return int(fileTime(file, 2).dwHighDateTime);
 }
 
 int System::writeTimeLow(int file)
 {
-    FILETIME time;
-    GetFileTime((HANDLE)file, NULL, NULL, &time);
-    return time.dwLowDateTime;
+    return int(fileTime(file, 2).dwLowDateTime);
 }
 
 int System::firstAdapter()
 {
-    return (int)m_adapters;
+    return 1;
 }
 
 int System::nextAdapter(int adapter)
 {
-    return (int)((IP_ADAPTER_INFO *)adapter)->Next;
+    // GetAdaptersInfo links the records of m_adapters in order.
+    const IP_ADAPTER_INFO *record = this->adapter(adapter);
+    if (!record || !record->Next)
+        return 0;
+    const ptrdiff_t index = record->Next - m_adapters;
+    return index >= 0 && index < AdapterCapacity ? int(index) + 1 : 0;
 }
 
 std::string System::modulePath()
@@ -487,40 +496,39 @@ std::string System::modulePath()
 
 int System::newBuffer()
 {
-    m_buffers.push_back(new std::vector<char>);
-    return (int)m_buffers.back();
+    return addBuffer(std::make_unique<std::vector<char>>());
 }
 
 int System::loadBuffer(std::string path)
 {
     std::ifstream file(path, std::ios::binary);
-    if (!file.good()) {
-        m_buffers.push_back(new std::vector<char>(0));
-    } else {
-        file.seekg(0, std::ios::end);
-        std::streamoff size = file.tellg();
-        file.seekg(0, std::ios::beg);
-        m_buffers.push_back(new std::vector<char>((size_t)size));
-        if (size != 0)
-            file.read(&(*m_buffers.back())[0], size);
-    }
-    return (int)m_buffers.back();
+    auto data = std::make_unique<std::vector<char>>();
+    if (file.good())
+        data->assign(std::istreambuf_iterator<char>(file), std::istreambuf_iterator<char>());
+    return addBuffer(std::move(data));
 }
 
 int System::openFile(std::string path)
 {
-    return (int)CreateFileA(path.c_str(), GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL,
-                            NULL);
+    const HANDLE handle =
+        CreateFileA(path.c_str(), GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+    if (handle == INVALID_HANDLE_VALUE)
+        return -1; // what the script compares a failed open with
+    m_files.push_back(handle);
+    return int(m_files.size());
 }
 
 void System::resizeBuffer(int buffer, int size)
 {
-    ((std::vector<char> *)buffer)->resize(size);
+    if (std::vector<char> *data = this->buffer(buffer))
+        data->resize(size_t(std::max(size, 0)));
 }
 
 void System::setBufferByte(int buffer, int index, int value)
 {
-    (*(std::vector<char> *)buffer)[index] = (char)value;
+    std::vector<char> *data = this->buffer(buffer);
+    if (data && index >= 0 && index < int(data->size()))
+        (*data)[index] = (char)value;
 }
 
 void System::setText(std::string text)
@@ -541,11 +549,37 @@ int System::equal(std::string first, std::string second)
 
 int System::bufferFromString(std::string text)
 {
-    size_t size = text.size();
-    m_buffers.push_back(new std::vector<char>(size));
-    if (size != 0)
-        memcpy(&(*m_buffers.back())[0], text.c_str(), size);
-    return (int)m_buffers.back();
+    return addBuffer(std::make_unique<std::vector<char>>(text.begin(), text.end()));
+}
+
+std::vector<char> *System::buffer(int id)
+{
+    return id > 0 && id <= int(m_buffers.size()) ? m_buffers[id - 1].get() : nullptr;
+}
+
+HANDLE System::file(int id) const
+{
+    return id > 0 && id <= int(m_files.size()) ? m_files[id - 1] : INVALID_HANDLE_VALUE;
+}
+
+const IP_ADAPTER_INFO *System::adapter(int id) const
+{
+    return id > 0 && id <= AdapterCapacity ? &m_adapters[id - 1] : nullptr;
+}
+
+int System::addBuffer(std::unique_ptr<std::vector<char>> data)
+{
+    m_buffers.push_back(std::move(data));
+    return int(m_buffers.size());
+}
+
+FILETIME System::fileTime(int id, int which) const
+{
+    FILETIME times[3] = {};
+    const HANDLE handle = file(id);
+    if (handle != INVALID_HANDLE_VALUE)
+        GetFileTime(handle, &times[0], &times[1], &times[2]);
+    return times[which];
 }
 // The volume's name and its file system's name, each in a buffer of VolumeNameCapacity characters
 // (anonymous: this file's own).

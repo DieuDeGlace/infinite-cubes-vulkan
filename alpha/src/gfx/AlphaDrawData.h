@@ -25,15 +25,22 @@ struct AlphaRenderDevice::DrawData {
     VkRect2D scissor {};
     D3DPRIMITIVETYPE primitive = D3DPT_TRIANGLELIST;
 
+    // The current targets hold a reference, as Direct3D 9's device does; the back buffer's own reference
+    // keeps it from ever being deleted.
     AlphaSurface backBuffer, backDepth;
     AlphaSurface *color = &backBuffer, *depth = &backDepth;
     std::vector<AlphaSurface *> targets {&backBuffer};
     bool targetChanged = false, inFrame = false, firstFrame = true;
     VkDevice device = VK_NULL_HANDLE;
     std::array<VkShaderModule, size_t(AlphaShaderId::Count)> modules {};
-    using PipelineKey = std::tuple<AlphaShaderId, AlphaShaderId, unsigned, D3DPRIMITIVETYPE, std::array<DWORD, 12>,
+    using PipelineKey = std::tuple<AlphaShaderId, AlphaShaderId, unsigned, D3DPRIMITIVETYPE, std::array<DWORD, 13>,
                                    VkFormat, VkFormat, VkSampleCountFlagBits>;
     std::map<PipelineKey, VkPipeline> pipelines;
+    DrawData()
+    {
+        color->retain();
+        depth->retain();
+    }
     ~DrawData();
     void applyTarget(gfx::VulkanContext &context);
 };

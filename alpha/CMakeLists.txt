@@ -218,6 +218,8 @@ add_executable(Cube WIN32
 )
 target_include_directories(Cube PRIVATE include plasma/include platform)
 target_compile_definitions(Cube PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN _WIN32_WINNT=0x0601 _CRT_SECURE_NO_WARNINGS)
+# The script machine's values are 32-bit ints; System and the machine pass ids and stack slots rather than pointers,
+# so it is x64-safe (cube/Scripting.h).
 option(CUBE_SCRIPTING "The interface script engine (abstr::Machine, cube::System), which runs db.dat's check at start" ON)
 if(CUBE_SCRIPTING)
  target_compile_definitions(Cube PRIVATE CUBE_SCRIPTING=1)

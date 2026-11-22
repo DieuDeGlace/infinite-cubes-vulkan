@@ -45,27 +45,86 @@ constexpr ShaderBinary shaders[] = {
 
 static_assert(std::size(shaders) == size_t(AlphaShaderId::Count));
 
+// Every Direct3D 9 state value has a Vulkan equivalent here, so no render state can stop a frame.
 VkBlendFactor blendFactor(DWORD value)
 {
     switch (value) {
     case D3DBLEND_ZERO:
         return VK_BLEND_FACTOR_ZERO;
-    case D3DBLEND_ONE:
-        return VK_BLEND_FACTOR_ONE;
+    case D3DBLEND_SRCCOLOR:
+        return VK_BLEND_FACTOR_SRC_COLOR;
+    case D3DBLEND_INVSRCCOLOR:
+        return VK_BLEND_FACTOR_ONE_MINUS_SRC_COLOR;
     case D3DBLEND_SRCALPHA:
         return VK_BLEND_FACTOR_SRC_ALPHA;
     case D3DBLEND_INVSRCALPHA:
         return VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
-    default:
-        throw std::logic_error("Unsupported Alpha blend factor");
+    case D3DBLEND_DESTALPHA:
+        return VK_BLEND_FACTOR_DST_ALPHA;
+    case D3DBLEND_INVDESTALPHA:
+        return VK_BLEND_FACTOR_ONE_MINUS_DST_ALPHA;
+    case D3DBLEND_DESTCOLOR:
+        return VK_BLEND_FACTOR_DST_COLOR;
+    case D3DBLEND_INVDESTCOLOR:
+        return VK_BLEND_FACTOR_ONE_MINUS_DST_COLOR;
+    case D3DBLEND_SRCALPHASAT:
+        return VK_BLEND_FACTOR_SRC_ALPHA_SATURATE;
+    case D3DBLEND_BLENDFACTOR:
+        return VK_BLEND_FACTOR_CONSTANT_COLOR;
+    case D3DBLEND_INVBLENDFACTOR:
+        return VK_BLEND_FACTOR_ONE_MINUS_CONSTANT_COLOR;
+    default: // D3DBLEND_ONE
+        return VK_BLEND_FACTOR_ONE;
+    }
+}
+
+VkBlendOp blendOp(DWORD value)
+{
+    switch (value) {
+    case D3DBLENDOP_SUBTRACT:
+        return VK_BLEND_OP_SUBTRACT;
+    case D3DBLENDOP_REVSUBTRACT:
+        return VK_BLEND_OP_REVERSE_SUBTRACT;
+    case D3DBLENDOP_MIN:
+        return VK_BLEND_OP_MIN;
+    case D3DBLENDOP_MAX:
+        return VK_BLEND_OP_MAX;
+    default: // D3DBLENDOP_ADD
+        return VK_BLEND_OP_ADD;
+    }
+}
+
+VkCompareOp compareOp(DWORD value)
+{
+    switch (value) {
+    case D3DCMP_NEVER:
+        return VK_COMPARE_OP_NEVER;
+    case D3DCMP_LESS:
+        return VK_COMPARE_OP_LESS;
+    case D3DCMP_EQUAL:
+        return VK_COMPARE_OP_EQUAL;
+    case D3DCMP_GREATER:
+        return VK_COMPARE_OP_GREATER;
+    case D3DCMP_NOTEQUAL:
+        return VK_COMPARE_OP_NOT_EQUAL;
+    case D3DCMP_GREATEREQUAL:
+        return VK_COMPARE_OP_GREATER_OR_EQUAL;
+    case D3DCMP_ALWAYS:
+        return VK_COMPARE_OP_ALWAYS;
+    default: // D3DCMP_LESSEQUAL
+        return VK_COMPARE_OP_LESS_OR_EQUAL;
     }
 }
 
 VkPrimitiveTopology topology(D3DPRIMITIVETYPE value)
 {
     switch (value) {
+    case D3DPT_POINTLIST:
+        return VK_PRIMITIVE_TOPOLOGY_POINT_LIST;
     case D3DPT_LINELIST:
         return VK_PRIMITIVE_TOPOLOGY_LINE_LIST;
+    case D3DPT_LINESTRIP:
+        return VK_PRIMITIVE_TOPOLOGY_LINE_STRIP;
     case D3DPT_TRIANGLEFAN:
         return VK_PRIMITIVE_TOPOLOGY_TRIANGLE_FAN;
     case D3DPT_TRIANGLESTRIP:
@@ -81,12 +140,13 @@ VkPipeline AlphaRenderDevice::pipeline(VkDevice device, VkPipelineLayout layout,
 {
     draw->device = device;
     const auto &rs = draw->renderStates;
-    const std::array<DWORD, 12> state = {rs[D3DRS_CULLMODE],         rs[D3DRS_ZENABLE],
+    const std::array<DWORD, 13> state = {rs[D3DRS_CULLMODE],         rs[D3DRS_ZENABLE],
                                          rs[D3DRS_ZWRITEENABLE],     rs[D3DRS_ZFUNC],
                                          rs[D3DRS_COLORWRITEENABLE], rs[D3DRS_ALPHABLENDENABLE],
                                          rs[D3DRS_BLENDOP],          rs[D3DRS_SRCBLEND],
                                          rs[D3DRS_DESTBLEND],        rs[D3DRS_SEPARATEALPHABLENDENABLE],
-                                         rs[D3DRS_SRCBLENDALPHA],    rs[D3DRS_DESTBLENDALPHA]};
+                                         rs[D3DRS_SRCBLENDALPHA],    rs[D3DRS_DESTBLENDALPHA],
+                                         rs[D3DRS_BLENDOPALPHA]};
     DrawData::PipelineKey key {draw->vs, draw->ps,    draw->stride, draw->primitive,
                                state,    colorFormat, depthFormat,  samples};
     auto found = draw->pipelines.find(key);
@@ -155,20 +215,19 @@ VkPipeline AlphaRenderDevice::pipeline(VkDevice device, VkPipelineLayout layout,
     VkPipelineDepthStencilStateCreateInfo depth {VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO};
     depth.depthTestEnable = depthFormat && rs[D3DRS_ZENABLE];
     depth.depthWriteEnable = depth.depthTestEnable && rs[D3DRS_ZWRITEENABLE];
-    depth.depthCompareOp = rs[D3DRS_ZFUNC] == D3DCMP_GREATER ? VK_COMPARE_OP_GREATER
-                           : rs[D3DRS_ZFUNC] == D3DCMP_LESS  ? VK_COMPARE_OP_LESS
-                                                             : VK_COMPARE_OP_LESS_OR_EQUAL;
+    depth.depthCompareOp = compareOp(rs[D3DRS_ZFUNC]);
     VkPipelineColorBlendAttachmentState attachment {};
     attachment.colorWriteMask = rs[D3DRS_COLORWRITEENABLE];
     attachment.blendEnable = rs[D3DRS_ALPHABLENDENABLE];
-    attachment.colorBlendOp = rs[D3DRS_BLENDOP] == D3DBLENDOP_SUBTRACT ? VK_BLEND_OP_SUBTRACT : VK_BLEND_OP_ADD;
+    attachment.colorBlendOp = blendOp(rs[D3DRS_BLENDOP]);
     attachment.srcColorBlendFactor = blendFactor(rs[D3DRS_SRCBLEND]);
     attachment.dstColorBlendFactor = blendFactor(rs[D3DRS_DESTBLEND]);
     attachment.srcAlphaBlendFactor =
         rs[D3DRS_SEPARATEALPHABLENDENABLE] ? blendFactor(rs[D3DRS_SRCBLENDALPHA]) : attachment.srcColorBlendFactor;
     attachment.dstAlphaBlendFactor =
         rs[D3DRS_SEPARATEALPHABLENDENABLE] ? blendFactor(rs[D3DRS_DESTBLENDALPHA]) : attachment.dstColorBlendFactor;
-    attachment.alphaBlendOp = rs[D3DRS_SEPARATEALPHABLENDENABLE] ? VK_BLEND_OP_ADD : attachment.colorBlendOp;
+    attachment.alphaBlendOp =
+        rs[D3DRS_SEPARATEALPHABLENDENABLE] ? blendOp(rs[D3DRS_BLENDOPALPHA]) : attachment.colorBlendOp;
     VkPipelineColorBlendStateCreateInfo blend {VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO};
     blend.attachmentCount = 1;
     blend.pAttachments = &attachment;

@@ -204,8 +204,9 @@ static int PushVariableCopy(Machine *machine, int index)
 
 static int PushVariableAddress(Machine *machine, int index)
 {
-    // The machine's values are 32-bit ints: a reference is the variable's address.
-    machine->push<int>((int)&machine->m_stack[machine->m_frames.back() + index][0]);
+    // The machine's values are 32-bit ints: a reference is the variable's stack slot (an address would not fit
+    // in x64 builds), read back by PushIndirect.
+    machine->push<int>(machine->m_frames.back() + index);
     return 0;
 }
 
@@ -224,15 +225,15 @@ static int PushBytesRange(Machine *machine, int count)
 
 static int PushIndirect(Machine *machine, int index)
 {
-    int *value;
-    if (index < 0) {
-        // Stack values contain integer pointers; dereference the selected pointer.
-        value = *reinterpret_cast<int **>(&machine->m_stack[-index][0]);
-    } else {
-        value = *reinterpret_cast<int **>(&machine->m_stack[machine->m_frames.back() + index][0]);
-    }
-    index = *value;
-    machine->push<int>(index);
+    // The selected value is a reference (PushVariableAddress): push the int in the slot it names.
+    const auto readInt = [machine](int slot) {
+        int value = 0;
+        if (slot >= 0 && slot < int(machine->m_stack.size()) && machine->m_stack[slot].size() >= sizeof(int))
+            memcpy(&value, machine->m_stack[slot].data(), sizeof(int));
+        return value;
+    };
+    const int reference = readInt(index < 0 ? -index : machine->m_frames.back() + index);
+    machine->push<int>(readInt(reference));
     return 0;
 }
 

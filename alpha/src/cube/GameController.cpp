@@ -4,6 +4,7 @@
 #include "cube/TownQuest.h"
 #include "cube/WorldBlocks.h"
 #include <fstream>
+#include <iterator>
 #include <iostream>
 #include <sstream>
 #include <algorithm>
@@ -352,18 +353,16 @@ GameController::GameController(AlphaRenderDevice *device, CubeShader *shader, pl
     m_textFxNode = m_engine->createNode(0, 0, 0, m_engine->root(), L"textFX");
     m_minimapNode = m_engine->createNode(0, 0, 0, m_gameScreen, L"minimap");
 
-    // The database file is checked by the interface script (in builds that have it: cube/Scripting.h).
-    std::ifstream file("db.dat");
-    file.seekg(0, std::ios::end);
-    int size = file.tellg();
-    file.seekg(0, std::ios::beg);
-    if (size == 0)
-        return;
-    std::string databaseScriptSource(size, ' ');
-    file.read(&databaseScriptSource[0], size);
-    file.close();
+    // The database file is checked by the interface script, in builds that have it (cube/Scripting.h). Without
+    // db.dat (or with an empty one) there is nothing to check, and the interface is still built.
 #if CUBE_SCRIPTING
-    m_quit = system.m_machine.evaluate<int>("db", system.m_firstText, databaseScriptSource) == 0;
+    {
+        std::ifstream file("db.dat", std::ios::binary);
+        const std::string databaseScriptSource((std::istreambuf_iterator<char>(file)),
+                                               std::istreambuf_iterator<char>());
+        if (!databaseScriptSource.empty())
+            m_quit = system.m_machine.evaluate<int>("db", system.m_firstText, databaseScriptSource) == 0;
+    }
 #endif
 
     // The interface is laid out in pixels: below, the text shapes' sizes, stroke radii and line

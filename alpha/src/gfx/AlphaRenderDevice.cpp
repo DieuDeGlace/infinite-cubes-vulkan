@@ -22,18 +22,23 @@ VkRect2D rectangle(LONG x, LONG y, LONG right, LONG bottom)
     return {{x, y}, {uint32_t(std::max(0L, right - x)), uint32_t(std::max(0L, bottom - y))}};
 }
 
+// The vertices (or indices) count primitives of a type take; 0 draws nothing.
 uint32_t vertexCount(D3DPRIMITIVETYPE type, UINT count)
 {
     switch (type) {
-    case D3DPT_TRIANGLELIST:
-        return count * 3;
+    case D3DPT_POINTLIST:
+        return count;
     case D3DPT_LINELIST:
         return count * 2;
+    case D3DPT_LINESTRIP:
+        return count ? count + 1 : 0;
+    case D3DPT_TRIANGLELIST:
+        return count * 3;
     case D3DPT_TRIANGLEFAN:
     case D3DPT_TRIANGLESTRIP:
         return count ? count + 2 : 0;
     default:
-        throw std::logic_error("Unsupported Alpha primitive");
+        return 0;
     }
 }
 
@@ -163,6 +168,9 @@ AlphaRenderDevice::DrawData::~DrawData()
     for (auto *texture : textures)
         if (texture)
             texture->Release();
+    color->Release();
+    if (depth)
+        depth->Release();
     if (vertices)
         vertices->Release();
     if (indices)
@@ -295,12 +303,16 @@ void AlphaRenderDevice::GetDepthStencilSurface(AlphaSurface **out)
 }
 void AlphaRenderDevice::SetRenderTarget(UINT, AlphaSurface *s)
 {
-    draw->color = s;
+    if (!s || s == draw->color)
+        return; // Direct3D 9 refuses a null colour target
+    bind(draw->color, s);
     draw->targetChanged = true;
 }
 void AlphaRenderDevice::SetDepthStencilSurface(AlphaSurface *s)
 {
-    draw->depth = s;
+    if (s == draw->depth)
+        return;
+    bind(draw->depth, s); // null: no depth buffer
     draw->targetChanged = true;
 }
 void AlphaRenderDevice::DrawData::applyTarget(gfx::VulkanContext &context)
@@ -437,18 +449,19 @@ void AlphaRenderDevice::prepareDraw(D3DPRIMITIVETYPE type, unsigned stride)
 }
 void AlphaRenderDevice::DrawIndexedPrimitive(D3DPRIMITIVETYPE type, INT base, UINT, UINT, UINT first, UINT count)
 {
-    if (!draw->inFrame || !draw->vertices || !draw->indices || !draw->streamStride || !count)
+    const uint32_t n = vertexCount(type, count);
+    if (!draw->inFrame || !draw->vertices || !draw->indices || !draw->streamStride || !n)
         return;
     prepareDraw(type, draw->streamStride);
     context.bindVertex(draw->vertices->upload(context));
     context.bindIndex(draw->indices->upload(context), draw->indices->type);
-    context.drawIndexed(vertexCount(type, count), first, base + int(draw->offset / draw->stride));
+    context.drawIndexed(n, first, base + int(draw->offset / draw->stride));
 }
 void AlphaRenderDevice::DrawPrimitiveUP(D3DPRIMITIVETYPE type, UINT count, const void *data, UINT stride)
 {
-    if (!draw->inFrame || !count)
+    const uint32_t n = vertexCount(type, count);
+    if (!draw->inFrame || !n || !data || !stride)
         return;
-    const auto n = vertexCount(type, count);
     auto &indices = draw->transientIndices;
     if (indices.size() < n) {
         const size_t first = indices.size();

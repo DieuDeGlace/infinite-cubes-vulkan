@@ -2,6 +2,7 @@
 #include <list>
 #include <map>
 #include <string>
+#include <vector>
 #include "XAudio2_7.h"
 #include "cube/Audio.h"
 #include "cube/Music.h"
@@ -11,21 +12,19 @@ namespace cube {
 class Database;
 class BytesIO;
 
-HRESULT FindChunk(BytesIO &stream, DWORD fourcc, DWORD &size, DWORD &position);
-HRESULT FindChunk(HANDLE file, DWORD fourcc, DWORD &size, DWORD &position);
-HRESULT ReadChunkData(BytesIO &stream, void *buffer, DWORD size, DWORD offset);
-HRESULT ReadChunkData(HANDLE file, void *buffer, DWORD size, DWORD offset);
-
 // XAudio2 implementation of Audio. Sounds load from data2.db or individual RIFF/WAVE files, are cached by identifier, and play on separate source voices. It also streams two music tracks.
 class XAudio2Engine : public Audio {
 public:
-    // A loaded sound owns a RIFF format chunk and an XAudio2 buffer referencing its data chunk. The destructor does not free buffer.pAudioData.
+    // A loaded sound: its RIFF format chunk, its samples, and the XAudio2 buffer that points into them (so a
+    // sound is never copied).
     struct Sound {
-        Sound() {}
-        virtual ~Sound() {}
+        Sound() = default;
+        Sound(const Sound &) = delete;
+        Sound &operator=(const Sound &) = delete;
 
-        WAVEFORMATEXTENSIBLE format; // CreateSourceVoice's format
-        XAUDIO2_BUFFER buffer;       // SubmitSourceBuffer's buffer
+        WAVEFORMATEXTENSIBLE format {}; // CreateSourceVoice's format
+        std::vector<BYTE> data;         // the "data" chunk
+        XAUDIO2_BUFFER buffer {};       // SubmitSourceBuffer's buffer, over data
     };
 
     XAudio2Engine();
