@@ -1,6 +1,12 @@
 # infinite-cubes-vulkan
 
-A Vulkan 1.3 port of the Steam release of Cube World for Windows x64 and Android ARM64, based on [coremaze/Infinite-Cubes](https://github.com/coremaze/Infinite-Cubes). Both builds use the same game and renderer sources. You need your own copy of the Steam game for its data files.
+A Vulkan 1.3 port of the Steam release of Cube World for Windows x64 and Android ARM64, based on [coremaze/Infinite-Cubes](https://github.com/coremaze/Infinite-Cubes). Both builds use the same game and renderer sources.
+
+## Ownership and required game files
+
+**You must own Cube World on Steam and supply the original game files from your own installation to play on Windows or Android.** The EXE and APK are distributed separately from the game data.
+
+Both builds need `resource1.dat`, `resource2.dat`, `logo.bmp`, the `.plx` and `dict_*.xml` files, and the `sprites/`, `sounds/`, and `music/` folders.
 
 ## Play
 
