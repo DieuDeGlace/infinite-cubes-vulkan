@@ -241,14 +241,9 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE, LPSTR, int)
     options.resolutionY = GetSystemMetrics(SM_CYSCREEN);
     options.load();
 
+    // Without XAudio2 2.7 the game plays without sound rather than refusing to start.
     XAudio2Engine audio;
-    if (!audio.initialize()) {
-        MessageBoxA(g_window,
-                    "Could not initialize XAudio2. Please make sure the latest DirectX End-User Runtime is installed: "
-                    "http://www.microsoft.com/en-us/download/details.aspx?id=35",
-                    "Cube World", MB_OK);
-        return 0;
-    }
+    audio.initialize();
     audio.setMusicVolume(options.musicVolume * 0.01f, 0);
 
     IDirectInput8W *input;
@@ -259,15 +254,30 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE, LPSTR, int)
                     "Cube World", MB_OK);
         return 0;
     }
-    IDirectInputDevice8W *keyboard;
-    input->CreateDevice(GUID_SysKeyboard, &keyboard, 0);
-    keyboard->SetDataFormat(&c_dfDIKeyboard);
-    keyboard->Acquire();
-    IDirectInputDevice8W *mouse;
-    input->CreateDevice(GUID_SysMouse, &mouse, 0);
-    mouse->SetDataFormat(&c_dfDIMouse);
-    mouse->SetCooperativeLevel(g_window, DISCL_NONEXCLUSIVE | DISCL_BACKGROUND);
-    mouse->Acquire();
+    // A keyboard or mouse DirectInput cannot open (none attached, or a remote session) reads as idle.
+    IDirectInputDevice8W *keyboard = nullptr;
+    if (FAILED(input->CreateDevice(GUID_SysKeyboard, &keyboard, 0)))
+        keyboard = nullptr;
+    if (keyboard) {
+        keyboard->SetDataFormat(&c_dfDIKeyboard);
+        keyboard->Acquire();
+    }
+    IDirectInputDevice8W *mouse = nullptr;
+    if (FAILED(input->CreateDevice(GUID_SysMouse, &mouse, 0)))
+        mouse = nullptr;
+    if (mouse) {
+        mouse->SetDataFormat(&c_dfDIMouse);
+        mouse->SetCooperativeLevel(g_window, DISCL_NONEXCLUSIVE | DISCL_BACKGROUND);
+        mouse->Acquire();
+    }
+    // A device's state, or zero when it is missing or lost (it is acquired again for the next frame).
+    const auto readDevice = [](IDirectInputDevice8W *device, DWORD size, void *state) {
+        memset(state, 0, size);
+        if (device && FAILED(device->GetDeviceState(size, state))) {
+            memset(state, 0, size);
+            device->Acquire();
+        }
+    };
 
     int argumentCount = 0;
     bool server = false;
@@ -332,7 +342,7 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE, LPSTR, int)
         }
         if (g_readInput && GetFocus() == g_window) {
             unsigned char keys[256];
-            keyboard->GetDeviceState(sizeof(keys), keys);
+            readDevice(keyboard, sizeof(keys), keys);
             g_game->m_inputs[InputKeyW] = keys[DIK_W] != 0;
             g_game->m_inputs[InputKeyS] = keys[DIK_S] != 0;
             g_game->m_inputs[InputKeyA] = keys[DIK_A] != 0;
@@ -345,7 +355,7 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE, LPSTR, int)
             g_game->m_inputs[InputKeyControl] = keys[DIK_LCONTROL] != 0;
             g_game->m_inputs[InputKeyQ] = keys[DIK_Q] != 0;
             DIMOUSESTATE mouseState;
-            mouse->GetDeviceState(sizeof(mouseState), &mouseState);
+            readDevice(mouse, sizeof(mouseState), &mouseState);
             if (g_game->isCursorVisible()) {
                 POINT cursor;
                 GetCursorPos(&cursor);
@@ -375,8 +385,10 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE, LPSTR, int)
 
     delete g_game;
     delete g_engine;
-    keyboard->Release();
-    mouse->Release();
+    if (keyboard)
+        keyboard->Release();
+    if (mouse)
+        mouse->Release();
     input->Release();
     delete g_shader;
     if (g_device)

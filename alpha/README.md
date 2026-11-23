@@ -10,7 +10,7 @@ This is the original Infinite Cubes client for Cube World Alpha (2013-07-20), bu
 - `resource1.dat`, `resource2.dat` and `logo.bmp`
 - The original Alpha `.plx` interface files
 
-Launch `Cube.exe` with a Vulkan 1.3 graphics driver. The original sound engine requires XAudio2 2.7, available through the [DirectX End-User Runtime](https://www.microsoft.com/en-us/download/details.aspx?id=8109).
+Launch `Cube.exe` with a Vulkan 1.3 graphics driver. No Visual C++ Redistributable is needed. Sound uses XAudio2 2.7 from the [DirectX End-User Runtime](https://www.microsoft.com/en-us/download/details.aspx?id=8109); without it the game runs silently.
 
 To continue an existing character and world, copy the entire original `Save` folder into this installation. Keep a backup before playing. Village requests save their progress and claimed rewards with the character. Talk to a villager marked with an orange exclamation point, follow the orange question mark to the enemy group, then return to collect the reward. Water uses the Steam port’s wave shading, depth-dependent absorption and refraction.
 

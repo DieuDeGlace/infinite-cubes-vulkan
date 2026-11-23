@@ -45,7 +45,8 @@ public:
     virtual int soundId(const std::string &name);
     virtual ~XAudio2Engine();
 
-    // CoInitializeEx, XAudio2Create, CreateMasteringVoice and the two Musics; false on failure.
+    // CoInitializeEx, XAudio2Create, CreateMasteringVoice and the two Musics. False when XAudio2 2.7 or the output
+    // device is unavailable: the engine then stays silent.
     bool initialize();
 
 protected:

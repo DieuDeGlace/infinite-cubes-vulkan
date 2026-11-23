@@ -120,13 +120,17 @@ void XAudio2Engine::cleanUp()
 bool XAudio2Engine::initialize()
 {
     CoInitializeEx(NULL, COINIT_MULTITHREADED);
-    if (FAILED(XAudio2Create(&m_xaudio2)))
-        return false;
-    if (FAILED(m_xaudio2->CreateMasteringVoice(&m_masteringVoice)))
-        return false;
+    // Without XAudio2 2.7 (the DirectX End-User Runtime, absent from a fresh Windows) or an output device the
+    // engine stays silent: no engine, and play and Music::playFile create no voices.
+    if (FAILED(XAudio2Create(&m_xaudio2)) || FAILED(m_xaudio2->CreateMasteringVoice(&m_masteringVoice))) {
+        if (m_xaudio2)
+            m_xaudio2->Release();
+        m_xaudio2 = 0;
+        m_masteringVoice = 0;
+    }
     m_music = new Music(m_xaudio2);
     m_secondMusic = new Music(m_xaudio2);
-    return true;
+    return m_xaudio2 != 0;
 }
 
 bool XAudio2Engine::isMusicPlaying()
@@ -136,7 +140,7 @@ bool XAudio2Engine::isMusicPlaying()
 
 void XAudio2Engine::play(int sound, float volume, float pan, float frequencyRatio, bool flag)
 {
-    if (volume <= 0.0f)
+    if (volume <= 0.0f || !m_xaudio2)
         return;
     Sound *cachedSound = m_sounds[sound];
     if (cachedSound) {
@@ -160,6 +164,8 @@ bool Music::playFile(const std::string &fileName, bool loop)
         m_voice->DestroyVoice();
         m_voice = 0; // a file that fails below leaves no destroyed voice for stop() or update()
     }
+    if (!m_xaudio2)
+        return false; // a silent engine (XAudio2Engine::initialize)
 
     FILE *file = fopen(fileName.c_str(), "rb");
     if (!file)
