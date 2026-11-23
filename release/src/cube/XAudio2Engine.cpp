@@ -193,7 +193,8 @@ void XAudio2Engine::play(int sound, float volume, float pan, float frequencyRati
     Sound *data = m_sounds[sound];
     if (data) {
         IXAudio2SourceVoice *voice = nullptr;
-        m_xaudio2->CreateSourceVoice(&voice, &data->format.Format);
+        if (FAILED(m_xaudio2->CreateSourceVoice(&voice, &data->format.Format)) || !voice)
+            return;
         voice->SetVolume(volume);
         voice->SubmitSourceBuffer(&data->buffer);
         voice->Start(0);

@@ -364,15 +364,30 @@ static int runGame(HINSTANCE programInstance, int showCommand)
                 MessageBoxA(window, "Could not initialize DirectInput8.", "Cube World", MB_OK);
             } else {
                 s_startupLog << "create directinput devices" << std::endl;
-                IDirectInputDevice8W *keyboard;
-                directInput->CreateDevice(GUID_SysKeyboard, &keyboard, nullptr);
-                keyboard->SetDataFormat(&c_dfDIKeyboard);
-                keyboard->Acquire();
-                IDirectInputDevice8W *mouse;
-                directInput->CreateDevice(GUID_SysMouse, &mouse, nullptr);
-                mouse->SetDataFormat(&c_dfDIMouse);
-                mouse->SetCooperativeLevel(window, DISCL_BACKGROUND | DISCL_NONEXCLUSIVE);
-                mouse->Acquire();
+                // A keyboard or mouse that cannot be opened (none attached, or a remote session) reads as idle.
+                IDirectInputDevice8W *keyboard = nullptr;
+                if (FAILED(directInput->CreateDevice(GUID_SysKeyboard, &keyboard, nullptr)))
+                    keyboard = nullptr;
+                if (keyboard) {
+                    keyboard->SetDataFormat(&c_dfDIKeyboard);
+                    keyboard->Acquire();
+                }
+                IDirectInputDevice8W *mouse = nullptr;
+                if (FAILED(directInput->CreateDevice(GUID_SysMouse, &mouse, nullptr)))
+                    mouse = nullptr;
+                if (mouse) {
+                    mouse->SetDataFormat(&c_dfDIMouse);
+                    mouse->SetCooperativeLevel(window, DISCL_BACKGROUND | DISCL_NONEXCLUSIVE);
+                    mouse->Acquire();
+                }
+                // A device that was lost reads as idle and is reacquired for the next frame.
+                const auto readDevice = [](IDirectInputDevice8W *device, DWORD size, void *state) {
+                    memset(state, 0, size);
+                    if (device && FAILED(device->GetDeviceState(size, state))) {
+                        memset(state, 0, size);
+                        device->Acquire();
+                    }
+                };
                 // The first argument, unless it is "server". Nothing reads it.
                 int argumentCount = 0;
                 std::string address;
@@ -469,9 +484,9 @@ static int runGame(HINSTANCE programInstance, int showCommand)
                         }
                         if (focus && GetForegroundWindow() == window) {
                             unsigned char keys[256];
-                            keyboard->GetDeviceState(sizeof(keys), keys);
+                            readDevice(keyboard, sizeof(keys), keys);
                             DIMOUSESTATE mouseState;
-                            mouse->GetDeviceState(sizeof(DIMOUSESTATE), &mouseState);
+                            readDevice(mouse, sizeof(DIMOUSESTATE), &mouseState);
                             if (game->isAssigningControl()) {
                                 // The first key or mouse button newly pressed becomes the binding; Escape and the
                                 // Enter keys only end the assignment.
@@ -947,8 +962,10 @@ static int runGame(HINSTANCE programInstance, int showCommand)
                 context.waitIdle();
                 ownedGame.reset();
                 ShowCursor(TRUE);
-                keyboard->Release();
-                mouse->Release();
+                if (keyboard)
+                    keyboard->Release();
+                if (mouse)
+                    mouse->Release();
                 directInput->Release();
             }
             engine = nullptr;
