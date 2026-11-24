@@ -34,10 +34,11 @@ PixelInput main([[vk::location(0)]] float4 position : POSITION,
         face == 2 ? float3(0, 1, 0) :
         face == 3 ? float3(0, -1, 0) :
         face == 4 ? float3(0, 0, 1) : float3(0, 0, -1);
-    float4x4 worldView = mul(worldMatrix, viewMatrix);
-    float4x4 worldViewProjection = mul(worldView, projMatrix);
-    worldViewProjection[3][2] -= depthOffset;
-    output.normal = normalize(mul(normal, (float3x3)worldView));
+    // The model's directions through the world and then the view: two products with a vector at every vertex rather
+    // than the product of the two matrices (the world matrix is affine, so its rotation part alone carries them).
+    const float3x3 worldRotation = (float3x3)worldMatrix;
+    const float3x3 viewRotation = (float3x3)viewMatrix;
+    output.normal = normalize(mul(mul(normal, worldRotation), viewRotation));
     const float3 x = worldMatrix[0].xyz;
     const float3 y = worldMatrix[1].xyz;
     const float3 z = worldMatrix[2].xyz;
@@ -59,12 +60,16 @@ PixelInput main([[vk::location(0)]] float4 position : POSITION,
     float4 vertex = float4(position.xyz * 255, 1);
     // Terrain draws translate only, so the offset applies unchanged before the world matrix.
     vertex.xyz += foliageOffset(position.w, mul(vertex, worldMatrix).xyz);
-    output.position = mul(vertex, worldViewProjection);
+    // The vertex in the world, the view and the clip space in turn; the depth offset moves the clip depth.
+    const float4 world = mul(vertex, worldMatrix);
+    const float4 view = mul(world, viewMatrix);
+    output.position = mul(view, projMatrix);
+    output.position.z -= depthOffset;
     output.clipPosition = output.position;
     output.position.xy += temporalJitter.xy * output.position.w;
-    float3 worldPosition = mul(vertex, worldMatrix).xyz;
+    float3 worldPosition = world.xyz;
     output.worldPosition = worldPosition;
-    output.viewPosition = mul(vertex, worldView).xyz;
+    output.viewPosition = view.xyz;
     float3 lighting = directionalLight * (color.a * materialColor.a) + backLight * ambientColor.rgb;
     float3 pointLighting = 0;
     for (int light = 0; light < 10; ++light)
@@ -109,6 +114,6 @@ PixelInput main([[vk::location(0)]] float4 position : POSITION,
     output.indirectColor = saturate(lerp(indirectColor, 1, white));
     output.albedo = saturate(vertexColor * materialColor.rgb);
     output.color.a = color.a;
-    output.lightDirection = mul(lightDirection.xyz, (float3x3)worldView);
+    output.lightDirection = mul(mul(lightDirection.xyz, worldRotation), viewRotation);
     return output;
 }

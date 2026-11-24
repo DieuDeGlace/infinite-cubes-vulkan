@@ -301,18 +301,33 @@ void VulkanRenderer::drawSunMap(const plasma::Vector<3, float> &direction, const
         }
         return true;
     };
-    // Each model's instances in the map cast their shadows in one instanced draw.
+    // Each model's instances in the map cast their shadows in one instanced draw. Plants, the models that have a far
+    // copy (cube::Sprite::lowDetail), cast with its level 1: a joined voxel is about two shadow texels wide, which the
+    // filtered shadow edge hides, for a quarter of the faces.
     std::vector<const SpriteBatch::Instance *> instances;
+    std::vector<SpriteBatch::Instance> joined;
     const auto drawModels = [&](const auto &groups) {
         for (const auto &group : groups) {
             auto *sprite = group.first;
+            cube::Sprite *caster = sprite->m_lowDetail[0] ? sprite->m_lowDetail[0] : sprite;
             instances.clear();
+            joined.clear();
             for (const auto &instance : group.second) {
-                if (reachesMap(sprite, instance))
+                if (!reachesMap(sprite, instance))
+                    continue;
+                if (caster == sprite) {
                     instances.push_back(&instance);
+                    continue;
+                }
+                // The copy's voxels are twice the size, from the same corner.
+                joined.push_back(instance);
+                for (int element = 0; element < 12; ++element)
+                    joined.back().matrix[element] *= 2.0f;
             }
-            if (!instances.empty() && sprite->bind()) {
-                drawSpriteInstances(sprite, instances.data(), instances.size());
+            for (const auto &instance : joined)
+                instances.push_back(&instance);
+            if (!instances.empty() && caster->bind()) {
+                drawSpriteInstances(caster, instances.data(), instances.size());
                 m_renderStats.shadowCasters += (int)instances.size();
             }
         }
