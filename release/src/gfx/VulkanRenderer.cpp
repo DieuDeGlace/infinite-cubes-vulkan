@@ -311,8 +311,10 @@ void VulkanRenderer::drawSunMap(const plasma::Vector<3, float> &direction, const
                 if (reachesMap(sprite, instance))
                     instances.push_back(&instance);
             }
-            if (!instances.empty() && sprite->bind())
+            if (!instances.empty() && sprite->bind()) {
                 drawSpriteInstances(sprite, instances.data(), instances.size());
+                m_renderStats.shadowCasters += (int)instances.size();
+            }
         }
     };
     if (m_sunShadows) {
@@ -697,6 +699,18 @@ void VulkanRenderer::setPointLights(const std::array<plasma::Vector<4, float>, 1
 {
     std::copy_n(positions.begin(), m_uniforms.lightPositions.size(), m_uniforms.lightPositions.begin());
     std::copy_n(colors.begin(), m_uniforms.lightColors.size(), m_uniforms.lightColors.begin());
+}
+
+bool VulkanRenderer::backEndStats(float &waitMilliseconds, float &presentMilliseconds, float &gpuMilliseconds,
+                                  unsigned &draws, unsigned long long &triangles) const
+{
+    const VulkanFrameStats &stats = m_context.frameStats();
+    waitMilliseconds = stats.waitMilliseconds;
+    presentMilliseconds = stats.presentMilliseconds;
+    gpuMilliseconds = stats.gpuMilliseconds;
+    draws = stats.draws;
+    triangles = stats.triangles;
+    return true;
 }
 
 bool VulkanRenderer::drawSpriteInstances(cube::Sprite *sprite, const SpriteBatch::Instance *const *instances,

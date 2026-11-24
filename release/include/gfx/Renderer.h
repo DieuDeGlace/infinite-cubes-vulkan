@@ -59,6 +59,20 @@ struct GroundSpot {
     float radius;                            // in blocks
 };
 
+// The time the last render spent in its stages, in milliseconds, and how many world sprites it drew and how many of
+// them cast into the sun shadow map. Game averages them for the frame statistics.
+struct RenderStats {
+    float setup = 0;     // the camera, light and sky
+    float collect = 0;   // gathering the visible sprites and lights
+    float sunMap = 0;    // the sun shadow map's pass
+    float terrain = 0;   // the zones' meshes
+    float sprites = 0;   // the opaque world sprites
+    float effects = 0;   // effects, particles, water, translucent sprites, clouds, stars and shadows
+    float hud = 0;       // the map, overlay models and HUD
+    int spriteCount = 0; // opaque and translucent world sprites
+    int shadowCasters = 0;
+};
+
 struct GroundShadow {
     plasma::Vector<3, cube::Fixed> position; // World position in fixed-point units (1/65536 block).
     float squaredDistance;                   // to the camera, in blocks; collectSprites sorts by it
@@ -98,7 +112,14 @@ public:
                             float strength, bool reflective)
     {}
     virtual void setHighlight(const plasma::Vector<4, float> &value) {}
+    // The back end's cost of the last presented frame: waits, GPU time, draws and triangles; false without one.
+    virtual bool backEndStats(float &waitMilliseconds, float &presentMilliseconds, float &gpuMilliseconds,
+                              unsigned &draws, unsigned long long &triangles) const
+    {
+        return false;
+    }
     const bool m_alphaLighting;
+    RenderStats m_renderStats; // the last render's
 
     virtual void setWorldMatrix(const plasma::Matrix<float> &matrix) {}
     virtual void setViewMatrix(const plasma::Matrix<float> &matrix) {}

@@ -59,6 +59,7 @@ public:
     void ToggleSunShadows();
     void ToggleGlobalIllumination();
     void ToggleMovingLeaves();
+    void ToggleFrameStats();
     void ToggleBiomeSize();
     void ToggleAlphaTerrain();
     void ToggleAlphaLighting();
@@ -111,6 +112,8 @@ protected:
     plasma::Node *m_rarityRightButton;
     plasma::Node *m_movingLeavesLeftButton;
     plasma::Node *m_movingLeavesRightButton;
+    plasma::Node *m_frameStatsLeftButton;
+    plasma::Node *m_frameStatsRightButton;
     plasma::Node *m_biomeSizeLeftButton;
     plasma::Node *m_biomeSizeRightButton;
     plasma::Node *m_alphaTerrainLeftButton;

@@ -144,6 +144,7 @@ struct Interface {
         plasma::Node *m_missionTag; // "missiontag-white"
         plasma::Node *m_townQuestTracker;
         std::wstring m_townQuestText;
+        plasma::Node *m_frameStats; // Game::updateFrameStats' readout, at the top centre
         PreviewWidget *m_previewWidget;
         std::vector<SpriteWidget *> m_equipmentSlots;
         SpriteWidget *m_quickItemSprites[QuickSlotCount];

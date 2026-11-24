@@ -108,6 +108,16 @@ OptionsWidget::OptionsWidget(Game *game, plasma::Node *node, plasma::Node *leftB
     m_movingLeavesRightButton->setDisplay(rightButton->display()->clone());
     m_movingLeavesRightButton->connectWidget(L"rightbutton", plasma::WIDGET_EVENT_POINTER_PRESSED, this,
                                              &OptionsWidget::ToggleMovingLeaves, true);
+    m_frameStatsLeftButton = leftButton->instance(node);
+    m_frameStatsLeftButton->setTransformation(leftButton->transformation()->clone());
+    m_frameStatsLeftButton->setDisplay(leftButton->display()->clone());
+    m_frameStatsLeftButton->connectWidget(L"leftbutton", plasma::WIDGET_EVENT_POINTER_PRESSED, this,
+                                          &OptionsWidget::ToggleFrameStats, true);
+    m_frameStatsRightButton = rightButton->instance(node);
+    m_frameStatsRightButton->setTransformation(rightButton->transformation()->clone());
+    m_frameStatsRightButton->setDisplay(rightButton->display()->clone());
+    m_frameStatsRightButton->connectWidget(L"rightbutton", plasma::WIDGET_EVENT_POINTER_PRESSED, this,
+                                           &OptionsWidget::ToggleFrameStats, true);
     m_cpuUsageLeftButton = leftButton->instance(node);
     m_cpuUsageLeftButton->setTransformation(leftButton->transformation()->clone());
     m_cpuUsageLeftButton->setDisplay(leftButton->display()->clone());
@@ -313,6 +323,7 @@ void OptionsWidget::draw()
     drawSetting(L"Shadows", m_options.sunShadows ? L"ON" : L"OFF");
     drawSetting(L"Global Illumination", m_options.rsmGI ? L"ON" : L"OFF");
     drawSetting(L"Moving Leaves", m_options.movingLeaves ? L"ON" : L"OFF");
+    drawSetting(L"Frame Stats", m_options.frameStats ? L"ON" : L"OFF");
 
     stream << (m_options.cpuPerformance ? L"FULL" : L"REDUCED");
     drawSetting(L"CPU Usage", stream.str());
@@ -457,10 +468,10 @@ void OptionsWidget::draw()
     m_rarityRightButton->display()->m_fillColor = m_rarityRightButton->widget()->isPointerOver()
                                                       ? plasma::Vector<4, float>(0.0f, 1.0f, 1.0f, 1.0f)
                                                       : plasma::Vector<4, float>(1.0f, 1.0f, 1.0f, 1.0f);
-    for (auto *button :
-         {m_globalIlluminationLeftButton, m_globalIlluminationRightButton, m_movingLeavesLeftButton,
-          m_movingLeavesRightButton, m_biomeSizeLeftButton, m_biomeSizeRightButton, m_alphaTerrainLeftButton,
-          m_alphaTerrainRightButton, m_alphaLightingLeftButton, m_alphaLightingRightButton}) {
+    for (auto *button : {m_globalIlluminationLeftButton, m_globalIlluminationRightButton, m_movingLeavesLeftButton,
+                         m_movingLeavesRightButton, m_frameStatsLeftButton, m_frameStatsRightButton,
+                         m_biomeSizeLeftButton, m_biomeSizeRightButton, m_alphaTerrainLeftButton,
+                         m_alphaTerrainRightButton, m_alphaLightingLeftButton, m_alphaLightingRightButton}) {
         button->display()->m_fillColor = button->widget()->isPointerOver()
                                              ? plasma::Vector<4, float>(0.0f, 1.0f, 1.0f, 1.0f)
                                              : plasma::Vector<4, float>(1.0f, 1.0f, 1.0f, 1.0f);
@@ -611,6 +622,7 @@ void OptionsWidget::cancel()
     m_options.sunShadows = m_game->m_options.sunShadows;
     m_options.rsmGI = m_game->m_options.rsmGI;
     m_options.movingLeaves = m_game->m_options.movingLeaves;
+    m_options.frameStats = m_game->m_options.frameStats;
     m_options.largerBiomes = m_game->m_options.largerBiomes;
     m_options.alphaTerrain = m_game->m_options.alphaTerrain;
     m_options.alphaLighting = m_game->m_options.alphaLighting;
@@ -648,6 +660,7 @@ void OptionsWidget::resized()
         {m_shadowsLeftButton, m_shadowsRightButton},
         {m_globalIlluminationLeftButton, m_globalIlluminationRightButton},
         {m_movingLeavesLeftButton, m_movingLeavesRightButton},
+        {m_frameStatsLeftButton, m_frameStatsRightButton},
         {m_cpuUsageLeftButton, m_cpuUsageRightButton},
         {m_soundFXVolumeLeftButton, m_soundFXVolumeRightButton},
         {m_musicVolumeLeftButton, m_musicVolumeRightButton},
@@ -785,6 +798,11 @@ void OptionsWidget::ToggleGlobalIllumination()
 void OptionsWidget::ToggleMovingLeaves()
 {
     m_options.movingLeaves = !m_options.movingLeaves;
+}
+
+void OptionsWidget::ToggleFrameStats()
+{
+    m_options.frameStats = !m_options.frameStats;
 }
 
 void OptionsWidget::ToggleBiomeSize()

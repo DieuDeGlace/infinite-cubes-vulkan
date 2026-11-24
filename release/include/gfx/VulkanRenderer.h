@@ -61,6 +61,8 @@ public:
                         const std::array<plasma::Vector<4, float>, 16> &colors) override;
     bool drawSpriteInstances(cube::Sprite *sprite, const SpriteBatch::Instance *const *instances,
                              size_t count) override;
+    bool backEndStats(float &waitMilliseconds, float &presentMilliseconds, float &gpuMilliseconds, unsigned &draws,
+                      unsigned long long &triangles) const override;
 
 private:
     void drawDynamic(const std::vector<TexturedVertex> &vertices, const std::vector<uint32_t> &indices);

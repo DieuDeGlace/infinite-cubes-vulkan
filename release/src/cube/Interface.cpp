@@ -284,7 +284,7 @@ void Interface::load(const std::vector<ResolutionInfo> *displayModes)
     m_optionsWidget->setOptions(m_game->m_options);
     // OptionsWidget draws its rows from 26, 28 apart. Apply, OK and Cancel are laid out 15 high but draw about 66 high,
     // reaching 92 above the dialog's bottom, so leave that much and a margin under the last row.
-    constexpr int OptionRows = 21;
+    constexpr int OptionRows = 22;
     m_optionsWidget->resizeTo(450.0f, 26.0f + OptionRows * 28.0f + 90.0f, true);
     m_optionsWidget->getNode()->setVisible(false);
     m_controlsWidget = new ControlsWidget(m_game, m_blackWidget->instance(m_game->m_engine->root()), button2, upButton,
@@ -508,6 +508,9 @@ void Interface::load(const std::vector<ResolutionInfo> *displayModes)
     m_inGame.m_townQuestTracker = createText(L"", L"town-quests", m_inGame.m_node, 0, 16, 3);
     m_inGame.m_townQuestTracker->setIgnoresPointer(true);
     m_inGame.m_townQuestTracker->setVisible(false);
+    m_inGame.m_frameStats = createText(L"", L"frame-stats", m_inGame.m_node, (1 << plasma::TEXT_CENTER), 14, 3);
+    m_inGame.m_frameStats->setIgnoresPointer(true);
+    m_inGame.m_frameStats->setVisible(false);
     m_inGame.m_location = gui->findNode(L"location");
     m_inGame.m_location->setParent(m_inGame.m_node);
     m_inGame.m_location->setIgnoresPointer(true);
@@ -966,6 +969,7 @@ void Interface::updateResolution(int width, int height)
     m_inGame.m_infoTextLarge->setPosition((float)width, 0.0f, -120.0f, 60.0f);
     m_inGame.m_infoTextMedium->setPosition((float)width, 0.0f, -120.0f, 100.0f);
     m_inGame.m_townQuestTracker->setPosition(0.0f, 0.0f, 24.0f, 108.0f);
+    m_inGame.m_frameStats->setPosition((float)(width / 2), 0.0f, 0.0f, 12.0f);
     m_inGame.m_travelSkillBars->getNode()->setPosition(0.0f, 0.0f, 24.0f, 84.0f);
     m_inGame.m_location->setPosition((float)(width / 2), (float)(height / 3), 0.0f, 0.0f);
     m_inGame.m_crosshair->setPosition((float)(width / 2), (float)(height / 2), 0.0f, 0.0f);

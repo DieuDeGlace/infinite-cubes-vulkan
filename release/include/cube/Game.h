@@ -200,6 +200,10 @@ public:
     // Characters are shared by every terrain and biome size, in Save/characters.db. Appends the characters of a
     // profile's own characters.db (from builds that kept one per profile) and renames that file characters.db.merged.
     void mergeProfileCharacters();
+    // Adds a frame to the frame statistics (Options::frameStats): its interval, the CPU time of the game's update
+    // before rendering and of the render, with the renderer's stages and the back end's costs. Every half second the
+    // HUD shows the averages and the slowest frame.
+    void updateFrameStats(double frameMilliseconds, double gameMilliseconds, double renderMilliseconds);
     // Selects the indexed map-marked creature.
     Creature *markedCreature();
     // Applies input acceleration and jump or glide controls.
@@ -363,6 +367,14 @@ public:
     bool m_shutdown;
     // With m_shutdown: start the game again, with the terrain and biome size now set (applyOptions).
     bool m_restart = false;
+    // updateFrameStats' sums over the current half second.
+    struct FrameStatsSums {
+        int frames = 0;
+        double frame = 0, slowestFrame = 0, game = 0, render = 0;
+        double setup = 0, collect = 0, sunMap = 0, terrain = 0, sprites = 0, effects = 0, hud = 0;
+        double wait = 0, present = 0, gpu = 0;
+        double draws = 0, triangles = 0, spriteCount = 0, shadowCasters = 0;
+    } m_frameStatsSums;
     plasma::Vector<2, float> m_gamepadWalkVector;
     plasma::Vector<2, float> m_gamepadTurnVector;
     plasma::Vector<3, double> m_cameraAngle;

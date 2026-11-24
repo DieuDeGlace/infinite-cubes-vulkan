@@ -1,6 +1,7 @@
 #include <windows.h>
 #include <mmsystem.h>
 #include <algorithm>
+#include <chrono>
 #include "cube/WorldIds.h"
 #include "cube/MathConstants.h"
 #include "gfx/RendererIds.h"
@@ -4020,17 +4021,11 @@ void Renderer::updateViewDistance(float frameTime)
     }
 }
 
-// The frame profile: frames counted and milliseconds summed per stage, reset after 20 frames (nothing reads them).
-static unsigned int s_frameCount;
-static unsigned int s_setupTime;
-static unsigned int s_skyTime;
-static unsigned int s_collectTime;
-static unsigned int s_chunkTime;
-static unsigned int s_spriteTime;
-static unsigned int s_waterTime;
-static unsigned int s_worldTime;
-static unsigned int s_overlayTime;
-static unsigned int s_interfaceTime;
+// The time in milliseconds, finer than timeGetTime's, for m_renderStats' stages.
+static double stageClock()
+{
+    return std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now().time_since_epoch()).count();
+}
 
 void Renderer::render(const plasma::Vector<3, cube::Fixed> &cameraPosition,
                       const plasma::Vector<3, cube::Fixed> &focusPosition, const plasma::Vector<3, float> &cameraAngle,
@@ -4042,7 +4037,7 @@ void Renderer::render(const plasma::Vector<3, cube::Fixed> &cameraPosition,
                       const int *lookedAtBlock, const plasma::Vector<2, float> &mapOverlayPosition,
                       float mapOverlayScale, int flags)
 {
-    unsigned int start = timeGetTime();
+    const double start = stageClock();
     m_cameraPosition = cameraPosition;
     m_cameraAngle = cameraAngle;
     m_drawOriginX = -focusPosition[0];
@@ -4196,7 +4191,6 @@ void Renderer::render(const plasma::Vector<3, cube::Fixed> &cameraPosition,
     setSunScreenPosition(cameraBlockType == cube::BlockWater ? plasma::Vector<3, float>(0.0f, 0.0f, -1.0f)
                                                              : sunDirection,
                          m_viewMatrix, m_projectionMatrix, cameraAngle[0], width, height);
-    unsigned int afterSetup = timeGetTime();
 
     int worldHidden = flags & RenderFlagOnlyPlayer;
     if (!worldHidden) {
@@ -4209,7 +4203,7 @@ void Renderer::render(const plasma::Vector<3, cube::Fixed> &cameraPosition,
     m_daylight *= 1.0f - sample.undead(info.type, info.influence) * UndeadDaylightReduction;
     float modelScale = 1024.0f / (float)m_height;
 
-    unsigned int afterSky = timeGetTime();
+    const double afterSky = stageClock();
     if (!worldHidden && m_world->m_localCreature) {
         m_townQuestMarkerTime -= m_frameTime;
         if (m_townQuestMarkerTime <= 0.0f) {
@@ -4224,27 +4218,33 @@ void Renderer::render(const plasma::Vector<3, cube::Fixed> &cameraPosition,
     // vector.
     collectSprites(*(const plasma::Vector<3, int> *)lookedAtBlock, flags);
     collectLights(lights);
+    const double afterGather = stageClock();
+    m_renderStats.spriteCount = (int)(m_worldBatch.m_translucent.size() + m_worldBatch.m_mirroredTranslucent.size());
+    for (const auto &entry : m_worldBatch.m_instances)
+        m_renderStats.spriteCount += (int)entry.second.size();
+    for (const auto &entry : m_worldBatch.m_mirroredInstances)
+        m_renderStats.spriteCount += (int)entry.second.size();
+    m_renderStats.shadowCasters = 0;
     if (!worldHidden)
         drawSunMap(lightDirection, focusPosition, moonWeight > 0.0f ? MoonShadowStrength * moonWeight : 1.0f,
                    moonWeight <= 0.0f);
-    unsigned int afterCollect = timeGetTime();
+    const double afterSunMap = stageClock();
 
     activateMode(RendererMode_OpaqueFront);
     setViewMatrix(m_viewMatrix);
     setProjectionMatrix(m_projectionMatrix);
     setAmbientColor(m_ambientColor);
     renderChunks(frontColor, backColor, lightDirection, m_ambientColor);
-    unsigned int afterChunks = timeGetTime();
+    const double afterChunks = stageClock();
     renderSprites(m_worldBatch, SpritePassFlagZoneLights);
     renderSprites(m_underwaterPlantBatch, SpritePassFlagZoneLights);
     renderTranslucentSprites(m_underwaterPlantBatch, SpritePassFlagZoneLights);
-    unsigned int afterSprites = timeGetTime();
+    const double afterSprites = stageClock();
     renderEffects();
     if (!worldHidden)
         renderParticles(particles);
     setLight(frontColor, backColor, lightDirection, m_ambientColor);
     renderWater(submerged);
-    unsigned int afterWater = timeGetTime();
     drawGroundSpots();
     activateMode(RendererMode_DepthFront);
     setProjectionMatrix(m_projectionMatrix);
@@ -4290,13 +4290,13 @@ void Renderer::render(const plasma::Vector<3, cube::Fixed> &cameraPosition,
     drawShadows(m_lightFrontColor);
     drawTrails();
     drawQuestMarkers(m_worldQuestMarkers, m_viewMatrix, m_projectionMatrix);
-    unsigned int afterWorld = timeGetTime();
+    const double afterWorld = stageClock();
     endWorldEffects();
 
     // The start menu's logo, swaying.
     if (flags & RenderFlagLogo) {
         // Logo HUD pose curve: clock sway period, relative screen origin, tilt and model scale.
-        float sway = cosf((float)((float)(afterWorld % 10000) * 0.0001f * 2.0f * cube::Pi));
+        float sway = cosf((float)((float)(timeGetTime() % 10000) * 0.0001f * 2.0f * cube::Pi));
         m_screenBatch.addAt(m_world->m_spriteManager->sprite(cube::SpriteCubeworld), (float)m_width * 0.5f,
                             (sway * 0.01f * 5.0f + 0.25f) * (float)m_height,
                             plasma::Vector<3, float>(20.0f - sway * 5.0f, 180.0f, 0.0f),
@@ -4443,33 +4443,17 @@ void Renderer::render(const plasma::Vector<3, cube::Fixed> &cameraPosition,
              normalized(plasma::Vector<3, float>(1.0f, 1.0f, -1.0f)), plasma::Vector<4, float>(0.3f, 0.3f, 0.8f, 1.0f));
     renderSprites(m_screenBatch, SpritePassFlagScreenPosition);
     renderTranslucentSprites(m_screenBatch, SpritePassFlagScreenPosition);
-    unsigned int afterOverlay = timeGetTime();
     drawInterface();
-    unsigned int afterInterface = timeGetTime();
+    const double afterInterface = stageClock();
     endScene();
 
-    s_frameCount++;
-    s_setupTime += afterSetup - start;
-    s_skyTime += afterSky - start;
-    s_collectTime += afterCollect - start;
-    s_chunkTime += afterChunks - start;
-    s_spriteTime += afterSprites - afterChunks;
-    s_waterTime += afterWater - afterChunks;
-    s_worldTime += afterWorld - afterChunks;
-    s_overlayTime += afterOverlay - afterChunks;
-    s_interfaceTime += afterInterface - afterChunks;
-    if (s_frameCount > 20) {
-        s_frameCount = 0;
-        s_setupTime = 0;
-        s_skyTime = 0;
-        s_collectTime = 0;
-        s_chunkTime = 0;
-        s_spriteTime = 0;
-        s_waterTime = 0;
-        s_worldTime = 0;
-        s_overlayTime = 0;
-        s_interfaceTime = 0;
-    }
+    m_renderStats.setup = (float)(afterSky - start);
+    m_renderStats.collect = (float)(afterGather - afterSky);
+    m_renderStats.sunMap = (float)(afterSunMap - afterGather);
+    m_renderStats.terrain = (float)(afterChunks - afterSunMap);
+    m_renderStats.sprites = (float)(afterSprites - afterChunks);
+    m_renderStats.effects = (float)(afterWorld - afterSprites);
+    m_renderStats.hud = (float)(afterInterface - afterWorld);
 }
 
 // Whether a block shows the face towards a neighbour: towards the open, and towards water unless the block is water

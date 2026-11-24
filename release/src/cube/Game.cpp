@@ -15,6 +15,7 @@
 #include <array>
 #include <chrono>
 #include <filesystem>
+#include <iomanip>
 #include <iostream>
 #include <memory>
 #include <mutex>
@@ -2468,6 +2469,65 @@ void Game::mergeProfileCharacters()
     }
 }
 
+// The header describes the statistics.
+void Game::updateFrameStats(double frameMilliseconds, double gameMilliseconds, double renderMilliseconds)
+{
+    plasma::Node *display = m_interface.m_inGame.m_frameStats;
+    display->setVisible(m_options.frameStats != 0 && !m_interface.m_mapOpen);
+    FrameStatsSums &sums = m_frameStatsSums;
+    if (!m_options.frameStats) {
+        sums = FrameStatsSums();
+        return;
+    }
+    const gfx::RenderStats &stages = m_renderer->m_renderStats;
+    float wait = 0.0f;
+    float present = 0.0f;
+    float gpu = 0.0f;
+    unsigned draws = 0;
+    unsigned long long triangles = 0;
+    m_renderer->backEndStats(wait, present, gpu, draws, triangles);
+    sums.frames++;
+    sums.frame += frameMilliseconds;
+    sums.slowestFrame = (std::max)(sums.slowestFrame, frameMilliseconds);
+    sums.game += gameMilliseconds;
+    sums.render += renderMilliseconds;
+    sums.setup += stages.setup;
+    sums.collect += stages.collect;
+    sums.sunMap += stages.sunMap;
+    sums.terrain += stages.terrain;
+    sums.sprites += stages.sprites;
+    sums.effects += stages.effects;
+    sums.hud += stages.hud;
+    sums.wait += wait;
+    sums.present += present;
+    sums.gpu += gpu;
+    sums.draws += draws;
+    sums.triangles += (double)triangles;
+    sums.spriteCount += stages.spriteCount;
+    sums.shadowCasters += stages.shadowCasters;
+    if (sums.frame < 500.0)
+        return;
+
+    // The averages per frame, in milliseconds unless counted. The CPU waits for the GPU in "wait"; a GPU time near
+    // the frame time means the GPU is the limit, a CPU sum near it the CPU.
+    const double frames = sums.frames;
+    std::wostringstream text;
+    text << std::fixed << std::setprecision(1);
+    text << L"FPS " << 1000.0 * frames / sums.frame << L"   frame " << sums.frame / frames << L"   slowest "
+         << sums.slowestFrame << L"\n";
+    text << L"CPU game " << sums.game / frames << L"   render " << sums.render / frames << L"   wait "
+         << sums.wait / frames << L"   present " << sums.present / frames << L"\n";
+    text << L"Render setup " << sums.setup / frames << L"   collect " << sums.collect / frames << L"   shadows "
+         << sums.sunMap / frames << L"   terrain " << sums.terrain / frames << L"   sprites " << sums.sprites / frames
+         << L"   effects " << sums.effects / frames << L"   HUD " << sums.hud / frames << L"\n";
+    text << L"GPU " << sums.gpu / frames << L"   draws " << (int)(sums.draws / frames) << L"   triangles "
+         << sums.triangles / frames / 1000.0 << L"k\n";
+    text << L"Sprites " << (int)(sums.spriteCount / frames) << L"   shadow casters "
+         << (int)(sums.shadowCasters / frames);
+    display->setText(text.str());
+    sums = FrameStatsSums();
+}
+
 void Game::resumeCharacter()
 {
     m_world->enterZoneMeshes();
@@ -2485,7 +2545,7 @@ void Game::resumeCharacter()
 }
 
 // Prints "You receive <item>." (or "<name> receives <item>.") in the chat: the count for stackable kinds, the item's
-// name in its rarity colour, "+" for a renowned one and, with the show-rarity option, a "±" per rarity level.
+// name in its rarity colour, "+" for a renowned one and, with the show-rarity option, a "Â±" per rarity level.
 void Game::notifyItem(const Item &item, int count, Creature *creature)
 {
     if (item.category == ItemCategoryCoin) {
@@ -3527,6 +3587,7 @@ int Game::soundId(int sound)
 // interface, location and music, then draws the frame.
 void Game::update(double milliseconds)
 {
+    const auto updateStart = std::chrono::steady_clock::now();
     applyWorldChange();
     advanceCharacterStartSearch();
 
@@ -5224,11 +5285,15 @@ void Game::update(double milliseconds)
     if (startMenuShown) {
         flags |= gfx::RenderFlagLogo;
     }
+    const auto renderStart = std::chrono::steady_clock::now();
     m_renderer->render(m_cameraPosition, m_cameraFocusPosition, cameraAngle, m_width, m_height, (float)step,
                        m_worldViewMatrix, m_viewMatrix, m_projectionMatrix, zoneRadius, m_mapPosition, m_mapZoom,
                        m_interface.m_scale, m_particles, m_lights, usableItems, m_ringRadius, m_ringRotation,
                        &m_crosshairItem[0], m_mapOverlayPosition, m_options.mapScale * m_mapOverlayScale, flags);
     unsigned int afterDraw = timeGetTime();
+    const std::chrono::duration<double, std::milli> gameTime = renderStart - updateStart;
+    const std::chrono::duration<double, std::milli> renderTime = std::chrono::steady_clock::now() - renderStart;
+    updateFrameStats(milliseconds, gameTime.count(), renderTime.count());
 
     // Counts frames and sums stage times, resetting after 20 frames. zoneTime is never reset; no code reads this
     // profile.

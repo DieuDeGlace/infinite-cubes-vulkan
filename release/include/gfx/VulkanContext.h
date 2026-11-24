@@ -43,6 +43,17 @@ struct VulkanDrawState {
     BlendSlot blend;
 };
 
+// What the last presented frame cost: the CPU's wait for an earlier frame's GPU work and for a swapchain image, the
+// time submitting and presenting took, the GPU's own time for the frame (0 where the queue has no timestamps), and
+// what it drew.
+struct VulkanFrameStats {
+    float waitMilliseconds = 0;
+    float presentMilliseconds = 0;
+    float gpuMilliseconds = 0;
+    uint32_t draws = 0;
+    uint64_t triangles = 0;
+};
+
 struct TemporalFrame {
     std::array<float, 16> clipToPrevious = {};
     std::array<float, 4> jitterPixels = {};
@@ -77,6 +88,7 @@ public:
     bool temporalEnabled() const { return m_temporalAA; }
     void finishScene(const TemporalFrame &temporal = {});
     bool present();
+    const VulkanFrameStats &frameStats() const { return m_frameStats; }
     void waitIdle() const;
 
     BufferPtr createBuffer(const void *data, size_t size, VkBufferUsageFlags usage);
@@ -152,6 +164,7 @@ private:
     VkDevice m_device = VK_NULL_HANDLE;
     VkQueue m_queue = VK_NULL_HANDLE;
     uint32_t m_queueFamily = 0;
+    uint32_t m_timestampBits = 0; // the queue family's valid timestamp bits; 0 without timestamps
     VmaAllocator_T *m_allocator = nullptr;
     VkPipelineLayout m_pipelineLayout = VK_NULL_HANDLE;
     VkDescriptorSetLayout m_uniformLayout = VK_NULL_HANDLE;
@@ -196,6 +209,10 @@ private:
     bool m_instanced = false; // drawInstanced's draw is being bound
     const void *m_uniforms = nullptr;
     size_t m_uniformSize = 0;
+    // The frame being recorded's draws and triangles, published to m_frameStats by present.
+    uint32_t m_draws = 0;
+    uint64_t m_triangles = 0;
+    VulkanFrameStats m_frameStats;
 };
 
 }

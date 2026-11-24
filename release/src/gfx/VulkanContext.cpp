@@ -1,6 +1,7 @@
 #include "gfx/VulkanContext.h"
 
 #include <algorithm>
+#include <chrono>
 #include <cstring>
 #include <ostream>
 #include <stdexcept>
@@ -161,6 +162,9 @@ struct VulkanContext::Frame {
     std::map<std::pair<std::array<VkImageView, ImageBindings.size()>, std::array<VkSampler, 2>>, VkDescriptorSet> imageSets;
     std::vector<std::shared_ptr<void>> inUse;
     VkPipeline boundPipeline = VK_NULL_HANDLE;
+    // The GPU's start and end of the frame's commands; timed once a submitted frame wrote them.
+    VkQueryPool timestamps = VK_NULL_HANDLE;
+    bool timed = false;
 };
 
 VulkanContext::VulkanContext() = default;
@@ -182,6 +186,8 @@ VulkanContext::~VulkanContext()
             vkDestroySemaphore(m_device, frame->acquired, nullptr);
             vkDestroyFence(m_device, frame->complete, nullptr);
             vkDestroyCommandPool(m_device, frame->commands, nullptr);
+            if (frame->timestamps)
+                vkDestroyQueryPool(m_device, frame->timestamps, nullptr);
             frame.reset();
         }
         for (const auto &entry : m_pipelines)
@@ -259,6 +265,12 @@ void VulkanContext::initialize(const char *surfaceExtension, const SurfaceFactor
         check(vkCreateFence(m_device, &fence, nullptr, &frame->complete), "Create frame fence");
         VkSemaphoreCreateInfo semaphore {VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO};
         check(vkCreateSemaphore(m_device, &semaphore, nullptr, &frame->acquired), "Create acquire semaphore");
+        if (m_timestampBits) {
+            VkQueryPoolCreateInfo timestamps {VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO};
+            timestamps.queryType = VK_QUERY_TYPE_TIMESTAMP;
+            timestamps.queryCount = 2;
+            check(vkCreateQueryPool(m_device, &timestamps, nullptr, &frame->timestamps), "Create frame timestamps");
+        }
     }
     const uint32_t transparentBlack = 0;
     m_emptyTexture = createTexture(1, 1, &transparentBlack);
@@ -297,6 +309,7 @@ void VulkanContext::createDevice()
                 m_physicalDevice = candidate;
                 m_properties = properties;
                 m_queueFamily = i;
+                m_timestampBits = queues[i].timestampValidBits;
                 maintenance4 = features13.maintenance4;
                 break;
             }
@@ -602,6 +615,7 @@ VkExtent2D VulkanContext::beginFrame(VkExtent2D clientSize, bool vsync, unsigned
     }
 
     Frame &frame = *m_frames[m_frameIndex];
+    const auto waitStart = std::chrono::steady_clock::now();
     check(vkWaitForFences(m_device, 1, &frame.complete, VK_TRUE, UINT64_MAX), "Wait for rendering");
     const VkResult acquire =
         vkAcquireNextImageKHR(m_device, m_swapchain, UINT64_MAX, frame.acquired, VK_NULL_HANDLE, &m_imageIndex);
@@ -613,6 +627,19 @@ VkExtent2D VulkanContext::beginFrame(VkExtent2D clientSize, bool vsync, unsigned
         m_recreate = !CompositorRotates;
     else
         check(acquire, "Acquire swapchain image");
+    m_frameStats.waitMilliseconds =
+        std::chrono::duration<float, std::milli>(std::chrono::steady_clock::now() - waitStart).count();
+    // This slot's last frame has finished, so its timestamps are ready.
+    if (frame.timed) {
+        uint64_t times[2];
+        if (vkGetQueryPoolResults(m_device, frame.timestamps, 0, 2, sizeof(times), times, sizeof(times[0]),
+                                  VK_QUERY_RESULT_64_BIT) == VK_SUCCESS) {
+            const uint64_t mask = m_timestampBits < 64 ? (uint64_t(1) << m_timestampBits) - 1 : ~uint64_t(0);
+            m_frameStats.gpuMilliseconds =
+                float(double((times[1] - times[0]) & mask) * m_properties.limits.timestampPeriod * 1e-6);
+        }
+        frame.timed = false;
+    }
 
     check(vkResetCommandPool(m_device, frame.commands, 0), "Reset frame commands");
     for (VkDescriptorPool pool : frame.pools)
@@ -633,6 +660,12 @@ VkExtent2D VulkanContext::beginFrame(VkExtent2D clientSize, bool vsync, unsigned
     VkCommandBufferBeginInfo command {VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
     command.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
     check(vkBeginCommandBuffer(frame.command, &command), "Begin frame commands");
+    if (frame.timestamps) {
+        vkCmdResetQueryPool(frame.command, frame.timestamps, 0, 2);
+        vkCmdWriteTimestamp2(frame.command, VK_PIPELINE_STAGE_2_TOP_OF_PIPE_BIT, frame.timestamps, 0);
+    }
+    m_draws = 0;
+    m_triangles = 0;
     const auto &scene = m_post.scene ? m_post.scene : m_swapImages[m_imageIndex];
     m_post.resolved = false;
     if (m_temporalAA || m_spatialAA)
@@ -646,11 +679,16 @@ VkExtent2D VulkanContext::beginFrame(VkExtent2D clientSize, bool vsync, unsigned
 
 bool VulkanContext::present()
 {
+    const auto presentStart = std::chrono::steady_clock::now();
     finishScene();
     endRendering();
     transition(m_swapImages[m_imageIndex], VK_IMAGE_LAYOUT_PRESENT_SRC_KHR, VK_PIPELINE_STAGE_2_NONE, VK_ACCESS_2_NONE);
     m_targets.clear();
     Frame &frame = *m_frame;
+    if (frame.timestamps) {
+        vkCmdWriteTimestamp2(frame.command, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, frame.timestamps, 1);
+        frame.timed = true;
+    }
     check(vkEndCommandBuffer(frame.command), "End frame commands");
     for (const auto &page : frame.pages) {
         if (page.used)
@@ -682,6 +720,10 @@ bool VulkanContext::present()
     present.pSwapchains = &m_swapchain;
     present.pImageIndices = &m_imageIndex;
     const VkResult result = vkQueuePresentKHR(m_queue, &present);
+    m_frameStats.presentMilliseconds =
+        std::chrono::duration<float, std::milli>(std::chrono::steady_clock::now() - presentStart).count();
+    m_frameStats.draws = m_draws;
+    m_frameStats.triangles = m_triangles;
     m_frame = nullptr;
     m_frameIndex = (m_frameIndex + 1) % m_frames.size();
     if (result == VK_SUBOPTIMAL_KHR && CompositorRotates)
@@ -1268,6 +1310,8 @@ void VulkanContext::drawIndexed(uint32_t indexCount, uint32_t firstIndex, int32_
     vkCmdBindVertexBuffers(command, 0, 1, &m_vertex.buffer->handle, &m_vertex.offset);
     vkCmdBindIndexBuffer(command, m_index.buffer->handle, m_index.offset, m_indexType);
     vkCmdDrawIndexed(command, indexCount, 1, firstIndex, vertexOffset, 0);
+    ++m_draws;
+    m_triangles += indexCount / 3;
     // Meshes and drawings can be rebuilt before the GPU completes this frame.
     m_frame->inUse.push_back(m_vertex.buffer);
     m_frame->inUse.push_back(m_index.buffer);
@@ -1289,6 +1333,8 @@ bool VulkanContext::drawInstanced(uint32_t indexCount, const void *instances, ui
     vkCmdBindVertexBuffers(command, 0, 2, buffers, offsets);
     vkCmdBindIndexBuffer(command, m_index.buffer->handle, m_index.offset, m_indexType);
     vkCmdDrawIndexed(command, indexCount, instanceCount, 0, 0, 0);
+    ++m_draws;
+    m_triangles += uint64_t(indexCount / 3) * instanceCount;
     m_frame->inUse.push_back(m_vertex.buffer);
     m_frame->inUse.push_back(m_index.buffer);
     return true;
