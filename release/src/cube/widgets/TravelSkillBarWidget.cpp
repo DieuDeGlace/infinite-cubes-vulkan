@@ -31,45 +31,34 @@ int TravelSkillBarWidget::visibleRows() const
     return rows;
 }
 
-void TravelSkillBarWidget::draw()
+TravelSkillBarWidget::Row TravelSkillBarWidget::row(int skill) const
 {
+    Row row;
     const Creature *player = m_game->m_world->m_localCreature;
     if (!player || !player->m_playerData)
-        return;
-    static constexpr const wchar_t *Names[] = {L"Swimming", L"Climbing", L"Riding"};
+        return row;
+    row.alpha = m_game->travelBarAlpha(skill);
     const float seconds[] = {player->m_playerData->swimmingSeconds, player->m_playerData->climbingSeconds,
                              player->m_playerData->ridingSeconds};
-    // Each row: the icon, and beside it the name and level over the progress bar, both within the icon's height.
-    // renderText places the text's baseline at its y.
-    constexpr float Icon = 26.0f, Gap = 5.0f, BarWidth = 120.0f, BarHeight = 7.0f, TextBaseline = 12.0f;
+    row.level = Creature::travelSkillLevel(seconds[skill]);
+    // Level n is reached after 6 n^2 seconds.
+    row.progress = 1.0f;
+    if (row.level < Creature::TravelSkillCap) {
+        const float from = 6.0f * row.level * row.level, to = 6.0f * (row.level + 1) * (row.level + 1);
+        row.progress = std::min(1.0f, std::max(0.0f, (seconds[skill] - from) / (to - from)));
+    }
+    return row;
+}
+
+void TravelSkillBarWidget::draw()
+{
+    // The icons, one row each, in the order Interface places the bars.
     float y = 0.0f;
     for (int i = 0; i < 3; ++i) {
-        const float alpha = m_game->travelBarAlpha(i);
+        const float alpha = row(i).alpha;
         if (alpha <= 0.0f)
             continue;
-        const int level = Creature::travelSkillLevel(seconds[i]);
-        // Level n is reached after 6 n^2 seconds.
-        float progress = 1.0f;
-        if (level < Creature::TravelSkillCap) {
-            const float from = 6.0f * level * level, to = 6.0f * (level + 1) * (level + 1);
-            progress = std::min(1.0f, std::max(0.0f, (seconds[i] - from) / (to - from)));
-        }
-        renderImage(m_icons[i], 0.0f, y, Icon, Icon, alpha);
-        std::wstringstream text;
-        text << Names[i] << L" Lv " << level;
-        setTextSize(13.0f);
-        setTextStrokeRadius(3.0f);
-        setTextStrokeColor(plasma::Vector<4, float>(0.0f, 0.0f, 0.0f, alpha));
-        setTextColor(plasma::Vector<4, float>(1.0f, 1.0f, 1.0f, alpha));
-        const float textX = Icon + Gap;
-        renderText(text.str(), textX, y + TextBaseline);
-        const float barY = y + Icon - BarHeight - 2.0f;
-        renderRectangle(textX - 1.0f, barY - 1.0f, BarWidth + 2.0f, BarHeight + 2.0f,
-                        plasma::Vector<4, float>(0.0f, 0.0f, 0.0f, 0.8f * alpha));
-        renderRectangle(textX, barY, BarWidth, BarHeight, plasma::Vector<4, float>(0.2f, 0.2f, 0.25f, alpha));
-        if (progress > 0.0f)
-            renderRectangle(textX, barY, BarWidth * progress, BarHeight,
-                            plasma::Vector<4, float>(0.45f, 0.8f, 1.0f, alpha));
+        renderImage(m_icons[i], 0.0f, y + (RowHeight - IconSize) * 0.5f, IconSize, IconSize, alpha);
         y += RowHeight;
     }
 }

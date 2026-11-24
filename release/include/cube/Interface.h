@@ -122,7 +122,10 @@ struct Interface {
         plasma::Node *m_comboPoints;     // "combopoints"
         InventoryWidget *m_equipmentInventoryWidget;
         CharacterWidget *m_characterWidget;
-        TravelSkillBarWidget *m_travelSkillBars; // below the coin
+        TravelSkillBarWidget *m_travelSkillBars; // the travel-skill icons, at the middle left
+        plasma::Node *m_travelBars[3] = {};      // a scaled copy of m_levelInfo beside each icon
+        plasma::Node *m_travelBarFills[3] = {};  // "xpbar" under each
+        float m_viewHeight = 0.0f;               // updateResolution's height
         InventoryWidget *m_craftingInventoryWidget;
         FormulaDetailsWidget *m_formulaDetailsWidget; // Read by Game.
         InventoryWidget *m_vendorInventoryWidget;

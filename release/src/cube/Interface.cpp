@@ -84,6 +84,19 @@ void Interface::addButtonCenter(plasma::Widget *widget, int x, int y)
     m_buttonCenters.push_back(plasma::Vector<2, int>((int)point[0], (int)point[1]));
 }
 
+// The travel-skill bars' size against the level bar's.
+static constexpr float TravelBarScale = 0.6f;
+// Between the level bar and the health and mana bars below it, and between the level bar and what is lifted above it.
+static constexpr float LevelBarGap = 4.0f;
+
+// Places the node so that the point (anchorX, anchorY) of its drawn bounds, as fractions of their size, is at (x, y).
+static void placeNode(plasma::Node *node, float x, float y, float anchorX, float anchorY)
+{
+    node->setPosition(x, y, 0.0f, 0.0f);
+    const plasma::Vector<2, float> low = node->getMinimum(0), high = node->getMaximum(0);
+    node->setPosition(x, y, x - (low[0] + anchorX * (high[0] - low[0])), y - (low[1] + anchorY * (high[1] - low[1])));
+}
+
 static plasma::Node *takeGuiTemplate(plasma::Node &gui, const wchar_t *name, plasma::Node *parent = nullptr)
 {
     plasma::Node *node = gui.findNode(name);
@@ -585,6 +598,17 @@ void Interface::load(const std::vector<ResolutionInfo> *displayModes)
     m_inGame.m_travelSkillBars =
         new TravelSkillBarWidget(m_game, m_game->m_engine->createNode(nullptr, nullptr, nullptr, m_inGame.m_node));
     m_inGame.m_travelSkillBars->getNode()->setIgnoresPointer(true);
+    // The travel-skill bars are the level bar in small.
+    for (int i = 0; i < 3; ++i) {
+        plasma::Node *bar = m_inGame.m_levelInfo->clone(m_inGame.m_node);
+        bar->setIgnoresPointer(true);
+        bar->transformation()->m_deformation.value().identity();
+        bar->transformation()->m_deformation.value().scale(TravelBarScale, TravelBarScale);
+        bar->transformation()->attributesChanged(true);
+        bar->setVisible(false);
+        m_inGame.m_travelBars[i] = bar;
+        m_inGame.m_travelBarFills[i] = bar->findNode(L"xpbar");
+    }
     m_inGame.m_formulaDetailsWidget =
         new FormulaDetailsWidget(m_game, m_blackWidget->instance(m_inGame.m_node), gui->findNode(L"itemshadow"),
                                  gui->findNode(L"craftbutton"), gui->findNode(L"craftbar"));
@@ -934,7 +958,6 @@ void Interface::updateResolution(int width, int height)
     m_inGame.m_mpBar->setPosition((float)(width / 2), (float)height, 8.0f, -50.0f);
     m_inGame.m_goldText->setPosition(0.0f, 0.0f, 85.0f, 60.0f);
     m_inGame.m_contextItemText->setPosition(0.0f, 0.0f, 255.0f, 60.0f);
-    m_inGame.m_levelInfo->setPosition(0.0f, 0.0f, 140.0f, 30.0f);
     m_inGame.m_experienceBar->setPosition((float)width, 0.0f, -315.0f, 35.0f);
     m_inGame.m_characterWidget->getNode()->setPosition(0.0f, 0.0f, 20.0f, 170.0f);
     m_inGame.m_multiplayerWidget->getNode()->setPosition(0.0f, 0.0f, 20.0f, 150.0f);
@@ -950,6 +973,23 @@ void Interface::updateResolution(int width, int height)
     m_inGame.m_selector->setPosition((float)(width / 2), (float)(height / 2), 0.0f, -200.0f);
     m_inGame.m_castBar->setPosition((float)(width / 2), (float)height, 0.0f, -200.0f);
     m_inGame.m_staminaBar->setPosition((float)(width / 2), (float)height, 0.0f, -180.0f);
+    // The level bar (with the CWVulkan progression) sits on the health and mana bars, centred between them; the Use
+    // button and the stamina and cast bars move up above it.
+    m_inGame.m_viewHeight = (float)height;
+    if (m_game->m_world->m_pyroProgression) {
+        const float barsLeft = m_inGame.m_hpBar->getMinimum(0)[0];
+        const float barsRight = m_inGame.m_mpBar->getMaximum(0)[0];
+        const float barsTop = m_inGame.m_hpBar->getMinimum(0)[1];
+        placeNode(m_inGame.m_levelInfo, (barsLeft + barsRight) * 0.5f, barsTop - LevelBarGap, 0.5f, 1.0f);
+        const float levelTop = m_inGame.m_levelInfo->getMinimum(0)[1];
+        plasma::Node *useButton = m_inGame.m_quickButtons[QuickSlotUse].button;
+        const float lift = std::max(0.0f, useButton->getMaximum(0)[1] - (levelTop - LevelBarGap));
+        useButton->setPosition((float)(width / 2), (float)height, -23.0f, -150.0f - lift);
+        m_inGame.m_staminaBar->setPosition((float)(width / 2), (float)height, 0.0f, -180.0f - lift);
+        m_inGame.m_castBar->setPosition((float)(width / 2), (float)height, 0.0f, -200.0f - lift);
+    } else {
+        m_inGame.m_levelInfo->setPosition(0.0f, 0.0f, 140.0f, 30.0f);
+    }
     m_inGame.m_comboPoints->setPosition((float)(width / 2), (float)(height / 2), 100.0f, 0.0f);
     m_inGame.m_missionTag->setPosition((float)(width / 2), (float)height, 0.0f, -300.0f);
 
@@ -1605,16 +1645,40 @@ void Interface::update(float step)
         m_inGame.m_townQuestText = std::move(questText);
     }
     m_inGame.m_townQuestTracker->setVisible(!m_inGame.m_townQuestText.empty() && !m_mapOpen && !m_inGame.m_menuOpen);
-    // Below the coin, top to bottom: the buff icons (row y 120, 3x scale; the mana pump's mana absorption among
-    // them), the travel-skill bars, then the request tracker. Without buffs the bars take the space under the coin.
-    constexpr float BelowCoin = 84.0f, BelowAuras = 176.0f;
+    // Below the coin: the buff icons (row y 120, 3x scale; the mana pump's mana absorption among them), then the
+    // request tracker.
+    constexpr float BelowAuras = 176.0f;
+    m_inGame.m_townQuestTracker->setPosition(0.0f, 0.0f, 24.0f, m_inGame.m_auraCount > 0 ? BelowAuras : 108.0f);
+    // At the middle left, a row per travel skill trained in the last minute: the widget's icon, then the level bar in
+    // small with the skill's name, level and progress.
+    constexpr float Left = 24.0f;
     const int skillRows = m_inGame.m_travelSkillBars->visibleRows();
-    const float barsTop = m_inGame.m_auraCount > 0 ? BelowAuras : BelowCoin;
-    m_inGame.m_travelSkillBars->getNode()->setPosition(0.0f, 0.0f, 24.0f, barsTop);
-    m_inGame.m_travelSkillBars->getNode()->setVisible(skillRows > 0 && !m_mapOpen && !m_inGame.m_menuOpen);
-    const float trackerTop = m_inGame.m_auraCount > 0 ? BelowAuras : 108.0f;
-    m_inGame.m_townQuestTracker->setPosition(
-        0.0f, 0.0f, 24.0f, skillRows > 0 ? barsTop + skillRows * TravelSkillBarWidget::RowHeight + 4.0f : trackerTop);
+    const bool showSkills = skillRows > 0 && !m_mapOpen && !m_inGame.m_menuOpen;
+    float rowTop = (m_inGame.m_viewHeight - skillRows * TravelSkillBarWidget::RowHeight) * 0.5f;
+    m_inGame.m_travelSkillBars->getNode()->setPosition(0.0f, rowTop, Left, 0.0f);
+    m_inGame.m_travelSkillBars->getNode()->setVisible(showSkills);
+    for (int i = 0; i < 3; ++i) {
+        plasma::Node *bar = m_inGame.m_travelBars[i];
+        const TravelSkillBarWidget::Row row = m_inGame.m_travelSkillBars->row(i);
+        if (!showSkills || row.alpha <= 0.0f) {
+            bar->setVisible(false);
+            continue;
+        }
+        std::wstringstream label;
+        label << TravelSkillBarWidget::Names[i] << L" Lv " << row.level;
+        bar->setText(L"xp", label.str(), true);
+        if (plasma::Node *fill = m_inGame.m_travelBarFills[i]) {
+            fill->m_transformation->m_deformation.value().identity();
+            fill->m_transformation->m_deformation.value().scale(row.progress, 1.0f);
+            fill->m_transformation->attributesChanged(true);
+        }
+        bar->m_display->m_fillColor = plasma::Vector<4, float>(1.0f, 1.0f, 1.0f, row.alpha);
+        bar->m_display->attributesChanged(true);
+        placeNode(bar, Left + TravelSkillBarWidget::IconSize + TravelSkillBarWidget::IconGap,
+                  rowTop + TravelSkillBarWidget::RowHeight * 0.5f, 0.0f, 0.5f);
+        bar->setVisible(true);
+        rowTop += TravelSkillBarWidget::RowHeight;
+    }
     m_game->m_engine->advance((int)step);
 }
 

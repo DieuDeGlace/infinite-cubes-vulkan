@@ -730,7 +730,11 @@ void Game::applyOptions(const Options &options)
     const bool profileChanged = (m_options.alphaTerrain != 0) != (m_world->m_alphaTerrain != nullptr) ||
                                 (m_options.largerBiomes != 0) != m_world->m_largerBiomes;
     if (profileChanged) {
-        saveCharacter();
+        // Only a character in play is saved: in the start menu and the character screens the local creature is a
+        // preview without the saved character's player data (its hair gradient among them).
+        if (!m_interface.m_characterSelection.m_node->isVisible() && !m_interface.m_startMenuNode->isVisible() &&
+            !m_interface.m_characterCreationNode->isVisible())
+            saveCharacter();
         m_restart = true;
         m_shutdown = true;
     }
