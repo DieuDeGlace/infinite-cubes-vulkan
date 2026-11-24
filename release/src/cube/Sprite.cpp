@@ -4,7 +4,10 @@
 #include <cstdint>
 #include <cstring>
 #include <limits>
+#include <map>
 #include <math.h>
+#include <tuple>
+#include <vector>
 #include <stdexcept>
 #include "cube/BytesIO.h"
 #include "cube/Database.h"
@@ -23,6 +26,73 @@ static inline float maxValue(float a, float b)
 static inline float minValue(float a, float b)
 {
     return a < b ? a : b;
+}
+
+// Joins updateMesh's quads that face one way in one plane and have one colour at all four corners into rectangles.
+// A colour that is the same at every corner stays the same across the rectangle, so the model shades exactly as
+// before with fewer triangles; quads whose corners are shaded differently stay as they are.
+static void mergeFlatQuads(std::vector<gfx::Vertex> &vertices)
+{
+    // Per face index (gfx::Vertex::normal): the axis across the plane, then the two axes along it.
+    static const int Axes[6][3] = {{0, 1, 2}, {0, 1, 2}, {1, 0, 2}, {1, 0, 2}, {2, 0, 1}, {2, 0, 1}};
+    // The flat quads by face, plane and colour; each by its lowest corner along the plane (b, then a) to its first
+    // vertex.
+    std::map<std::tuple<int, int, uint32_t>, std::map<std::pair<int, int>, size_t>> flat;
+    std::vector<gfx::Vertex> merged;
+    merged.reserve(vertices.size());
+    for (size_t quad = 0; quad + 3 < vertices.size(); quad += 4) {
+        const gfx::Vertex *corners = &vertices[quad];
+        const plasma::Vector<4, unsigned char> &color = corners[0].color;
+        if (corners[0].normal >= 6 || corners[1].color != color || corners[2].color != color ||
+            corners[3].color != color) {
+            merged.insert(merged.end(), corners, corners + 4);
+            continue;
+        }
+        const int *axes = Axes[corners[0].normal];
+        int a = 255;
+        int b = 255;
+        for (int i = 0; i < 4; i++) {
+            a = (std::min)(a, (int)corners[i].position[axes[1]]);
+            b = (std::min)(b, (int)corners[i].position[axes[2]]);
+        }
+        const uint32_t packed = color[0] | (color[1] << 8) | (color[2] << 16) | ((uint32_t)color[3] << 24);
+        flat[std::make_tuple((int)corners[0].normal, (int)corners[0].position[axes[0]], packed)][{b, a}] = quad;
+    }
+
+    // Greedy rectangles: from the lowest free quad, as far along a as the row is free, then as many rows along b as
+    // are free over that width.
+    for (auto &[key, cells] : flat) {
+        const int *axes = Axes[std::get<0>(key)];
+        while (!cells.empty()) {
+            const auto [b0, a0] = cells.begin()->first;
+            const size_t first = cells.begin()->second;
+            int width = 1;
+            while (cells.count({b0, a0 + width}))
+                width++;
+            const auto rowFree = [&](int b) {
+                for (int a = a0; a < a0 + width; a++) {
+                    if (!cells.count({b, a}))
+                        return false;
+                }
+                return true;
+            };
+            int height = 1;
+            while (rowFree(b0 + height))
+                height++;
+            for (int b = b0; b < b0 + height; b++) {
+                for (int a = a0; a < a0 + width; a++)
+                    cells.erase({b, a});
+            }
+            // The first quad's corners keep their order and colour, moved to the rectangle's edges.
+            for (int i = 0; i < 4; i++) {
+                gfx::Vertex corner = vertices[first + i];
+                corner.position[axes[1]] = (unsigned char)(corner.position[axes[1]] > a0 ? a0 + width : a0);
+                corner.position[axes[2]] = (unsigned char)(corner.position[axes[2]] > b0 ? b0 + height : b0);
+                merged.push_back(corner);
+            }
+        }
+    }
+    vertices.swap(merged);
 }
 
 Sprite::Sprite(gfx::Graphics &graphics, bool fullIntensity)
@@ -441,6 +511,8 @@ void Sprite::updateMesh(int margin)
             }
         }
     }
+
+    mergeFlatQuads(vertices);
 
     // Two triangles per quad: 0 1 2 and 0 2 3.
     if (vertices.size() < 0x10000) {
