@@ -31,11 +31,14 @@ float World::terrainHeight(int x, int y, int mode)
 }
 
 float World::terrainOffset(int x, int y, float nativeHeight, const BiomeSample &biomes, const AreaInfo &area,
-                           float roadDistance)
+                           float roadDistance, float *rockiness)
 {
-    if (!m_alphaTerrain)
+    if (!m_alphaTerrain) {
+        if (rockiness)
+            *rockiness = 0.0f;
         return 0.0f;
-    return m_alphaTerrain->heightOffset(*this, x, y, nativeHeight, biomes, area, roadDistance);
+    }
+    return m_alphaTerrain->heightOffset(*this, x, y, nativeHeight, biomes, area, roadDistance, rockiness);
 }
 
 float World::channelDistance(int x, int y, const BiomeSample &biomes, const AreaInfo &area)

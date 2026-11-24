@@ -5721,6 +5721,30 @@ int maxExperience(int level)
     return (int)(pow(2.0, (level - 1) * 0.5f) * 10.0);
 }
 
+// buildingModel's last value marks a protected actor rather than a scale.
+constexpr unsigned char ProtectedModel = 255;
+
+void Creature::setHpScale(float scale)
+{
+    m_entityData.buildingModel =
+        scale == 1.0f ? 0 : (unsigned char)std::clamp(std::lround(scale * 4.0f), 1L, long(ProtectedModel - 1));
+}
+
+float Creature::hpScale() const
+{
+    return m_entityData.buildingModel && !isProtected() ? m_entityData.buildingModel * 0.25f : 1.0f;
+}
+
+void Creature::setProtected()
+{
+    m_entityData.buildingModel = ProtectedModel;
+}
+
+bool Creature::isProtected() const
+{
+    return m_entityData.buildingModel == ProtectedModel;
+}
+
 float Creature::maxHP()
 {
     float hp = 100.0f;
@@ -5766,7 +5790,7 @@ float Creature::maxHP()
     if (m_entityData.appearance.appearanceFlags & AppearanceFlagPromotedResident) {
         hp *= 1.1f;
     }
-    hp *= m_hpScale;
+    hp *= hpScale();
     if (m_pyroProgression) {
         if (m_entityData.hostilityType == HostilityPlayer)
             hp += m_entityData.progressionLevel - 1;

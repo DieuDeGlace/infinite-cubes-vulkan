@@ -7931,16 +7931,18 @@ void Game::updateCreatureLabels(std::vector<NearbyCreature> &creatures)
         label->setTextColor(L"info", color, true);
         label->setText(L"info", text.str(), true);
         text.str(L"");
-        text << getFoldedCountText((int)it->creature->m_entityData.hp) << "/"
-             << getFoldedCountText((int)it->creature->maxHP());
+        // A copy that is behind the host (a maximum that changed there, an HP scale not received yet) can hold more
+        // health than its maximum here: the bar and the count never show more than full.
+        const float health = it->creature->m_entityData.hp;
+        const float maximum = std::max(it->creature->maxHP(), health);
+        const float filled = maximum > 0.0f ? std::clamp(health / maximum, 0.0f, 1.0f) : 0.0f;
+        text << getFoldedCountText((int)health) << "/" << getFoldedCountText((int)maximum);
         label->setText(L"text", text.str(), true);
         bar->m_transformation->m_deformation.value().identity();
-        bar->m_transformation->m_deformation.value().scale(it->creature->m_entityData.hp / it->creature->maxHP(), 1.0f,
-                                                           1.0f);
+        bar->m_transformation->m_deformation.value().scale(filled, 1.0f, 1.0f);
         bar->m_transformation->attributesChanged(true);
         bar2->m_transformation->m_deformation.value().identity();
-        bar2->m_transformation->m_deformation.value().scale(
-            1.0f - it->creature->m_entityData.hp / it->creature->maxHP(), 1.0f, 1.0f);
+        bar2->m_transformation->m_deformation.value().scale(1.0f - filled, 1.0f, 1.0f);
         bar2->m_transformation->attributesChanged(true);
         if (m_highlightedCreatureId && it->creature->m_id == m_highlightedCreatureId) {
             m_interface.m_inGame.m_highlightedTarget->m_display->m_visibility.value() = 1;

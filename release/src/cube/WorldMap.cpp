@@ -772,6 +772,7 @@ bool WorldMap::update(const plasma::Vector<3, Fixed> &position, int level)
             std::vector<int> heights((g_mapRegionSize + 2 * g_mapRegionBorder) *
                                      (g_mapRegionSize + 2 * g_mapRegionBorder));
             std::vector<float> reliefOffsets(heights.size());
+            std::vector<float> rockiness(heights.size());
             const auto columnIndex = [](int i, int j) {
                 return i + g_mapRegionBorder + (g_mapRegionBorder + j) * (g_mapRegionSize + 2 * g_mapRegionBorder);
             };
@@ -808,7 +809,8 @@ bool WorldMap::update(const plasma::Vector<3, Fixed> &position, int level)
                     const float sand = m_world->sandAmount(x, y, sample.humidity(), cliffs, desertness);
                     float terrain = m_world->height(x, y, elevation, cliffs, river, lavaRiver, poisonRiver, sand, road,
                                                     mountains, &info, HeightFlagCaveMouths);
-                    const float relief = m_world->terrainOffset(x, y, terrain, sample, info, roadDistance);
+                    const float relief = m_world->terrainOffset(x, y, terrain, sample, info, roadDistance,
+                                                                &rockiness[columnIndex(i, j)]);
                     reliefOffsets[columnIndex(i, j)] = relief;
                     terrain += relief;
                     if (terrain > 0.0f && river > 0.5f) {
@@ -974,8 +976,8 @@ bool WorldMap::update(const plasma::Vector<3, Fixed> &position, int level)
                     float heightSouth = nearbyHeight(x, y - 1);
                     float heightNorth = nearbyHeight(x, y + 1);
                     const ReliefSurface reliefSurface =
-                        World::reliefSurface(m_world->m_alphaTerrain != nullptr, relief, terrain, heightWest,
-                                             heightEast, heightSouth, heightNorth, desertness);
+                        World::reliefSurface(relief, rockiness[columnIndex(i, j)], terrain, heightWest, heightEast,
+                                             heightSouth, heightNorth, desertness);
                     if (top <= 0 || river > 0.5f) {
                         // Water (a sea column, or a river in a valley): bluer with depth, greener in the undead lands,
                         // and at the far zoom levels faded towards the ground's colour.

@@ -8,6 +8,7 @@ namespace cube {
 struct ReliefSurface {
     int stoneDepth = 0;
     bool grassCap = false;
+    float rockiness = 0.0f; // how fully the exposed blocks turn to stone (World::reliefStone)
 
     bool isStone(int depth) const { return depth > 0 && depth <= stoneDepth; }
 };

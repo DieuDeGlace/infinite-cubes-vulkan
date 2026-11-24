@@ -36,6 +36,8 @@ constexpr float PlaceFlatFraction = 0.81f;
 // Above the shore the relief may grow by this much per block the native ground rises. A fade over a fixed height band
 // multiplied steep native slopes by up to ten and raised them into cliffs.
 constexpr float ShoreReliefSlope = 1.5f;
+// Cliffs show full stone where the relief may rise this many blocks, and the native earth where it must stay flat.
+constexpr float RockFade = 6.0f;
 constexpr int CellsPerZone = BlocksPerZone / BlocksPerCell;
 
 struct Footprint {
@@ -226,8 +228,10 @@ AlphaTerrain::AlphaTerrain()
 AlphaTerrain::~AlphaTerrain() = default;
 
 float AlphaTerrain::heightOffset(World &world, int x, int y, float height, const World::BiomeSample &biomes,
-                                 const World::AreaInfo &area, float roadDistance) const
+                                 const World::AreaInfo &area, float roadDistance, float *rockiness) const
 {
+    if (rockiness)
+        *rockiness = 0.0f;
     // Roads, places, landmarks and channel beds keep their native grade, and the shore keeps its height. The relief
     // climbs away from each at a bounded slope, so tall hills ramp down instead of being cut off at the edge of a blend
     // band. Cheapest bounds first.
@@ -245,6 +249,10 @@ float AlphaTerrain::heightOffset(World &world, int x, int y, float height, const
     if (!tighten(world.channelDistance(x, y, biomes, area)) || !tighten(placeDistance(world, x, y)) ||
         !tighten(featureDistance(world, x, y)))
         return 0.0f;
+    // The bound grows smoothly away from roads, places and the shore, so cliffs fade from stone to the native earth
+    // over a few blocks there. The relief's own value crosses zero inside hill country and would leave earthen bands.
+    if (rockiness)
+        *rockiness = fadeIn(cap, 0.0f, RockFade);
 
     const float magnitude = (std::max)(0.0f, smoothMin(std::abs(relief), cap, (std::min)(CapSmoothing, cap)));
     // Keep valleys above the shore. Quantize only the combined height when writing voxel columns.

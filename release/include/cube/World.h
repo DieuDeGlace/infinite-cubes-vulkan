@@ -519,10 +519,14 @@ public:
     // Whether the building of a zone (streetBuildingType at the zone's spawn point) has the given storey: below
     // buildingStoreys of its type, and for type 45 inside a castle part.
     bool isOccupiedStorey(int zoneX, int zoneY, int storey);
-    static ReliefSurface reliefSurface(bool alphaTerrain, float offset, float height, float heightWest,
-                                       float heightEast, float heightSouth, float heightNorth, float desertness);
+    // offset and rockiness from terrainOffset.
+    static ReliefSurface reliefSurface(float offset, float rockiness, float height, float heightWest, float heightEast,
+                                       float heightSouth, float heightNorth, float desertness);
     BlockProperties<float> reliefStoneBlock(int x, int y, int z, float temperature, float humidity, float firelands,
                                             float undead);
+    // block turned towards reliefStoneBlock by the relief's rockiness: stone where it passes one half.
+    BlockProperties<float> reliefStone(BlockProperties<float> block, const ReliefSurface &relief, int x, int y, int z,
+                                       float temperature, float humidity, float firelands, float undead);
     // Surface block at height z: lava or poison above weight 0.5; columnBlock below all five heights, in water, on a
     // path or beach; otherwise coverBlock blended with columnBlock where neighbouring heights differ by more than a
     // block. Path values above 0.5 select a path block.
@@ -658,7 +662,7 @@ public:
     float terrainHeight(int x, int y, int mode);
     // roadDistance comes from streetAmount.
     float terrainOffset(int x, int y, float nativeHeight, const BiomeSample &biomes, const AreaInfo &area,
-                        float roadDistance);
+                        float roadDistance, float *rockiness = nullptr);
     // Estimated blocks from (x, y) to the edge of the nearest flat river, lava or poison channel bed, or a large value
     // where no channel runs. The profile's depth is the channel's strength over the column (biome blends).
     float channelDistance(int x, int y, const BiomeSample &biomes, const AreaInfo &area);

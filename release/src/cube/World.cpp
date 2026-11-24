@@ -741,7 +741,7 @@ void World::applyHit(const ServerUpdates::HitPacket &hit)
                     m_serverUpdates.m_buffPacketList.push_back(packet);
                 }
             }
-        } else if (target->canBeDamaged() && (!attacker || attacker->canBeDamaged())) {
+        } else if (target->canBeDamaged() && !target->isProtected() && (!attacker || attacker->canBeDamaged())) {
             target->m_entityData.hp -= hit.damage;
         }
     } else if (hit.damage < 0.0f) {
@@ -6660,32 +6660,37 @@ int World::structureLevel(int x, int y, int type)
     return floorToInt(std::max(top + 1.0f, 0.0f) * 0.5f * 2.0f + 2.0f + 0.0f);
 }
 
-ReliefSurface World::reliefSurface(bool alphaTerrain, float offset, float height, float heightWest, float heightEast,
+ReliefSurface World::reliefSurface(float offset, float rockiness, float height, float heightWest, float heightEast,
                                    float heightSouth, float heightNorth, float desertness)
 {
-    // Stone walls on every cliff of an Alpha world, including those where the relief is capped to nothing, so one wall
-    // does not change from stone to earth where the relief ends. The grass cap stays on the relief: elsewhere the native
-    // surface keeps its roads, paths and sand.
-    if (!alphaTerrain)
+    // Stone shows where the relief may rise (its rockiness), fading to the native earth towards the roads, places and
+    // shores it leaves flat. That bound changes smoothly from column to column, so one wall does not switch between
+    // stone and earth where each column's own lift or drop crosses a threshold.
+    if (rockiness <= 0.0f)
         return {};
 
     const float lowestNeighbor = (std::min)({heightWest, heightEast, heightSouth, heightNorth});
     // The uppermost block carries ground cover. A drop of two or more exposes stone below it.
     const int depth = floorToInt(height) - floorToInt(lowestNeighbor) - 1;
-    // Without relief the native ground keeps its earth on the low steps of fields, plots and road edges; only its tall
-    // terrace walls turn to stone.
-    constexpr int NativeWallDepth = 3;
-    if (offset == 0.0f && depth < NativeWallDepth)
-        return {};
-    return {(std::max)(0, depth), offset != 0.0f && desertness <= 0.5f};
+    // Where the relief lifts a column by less than this, its top keeps the native cover (its dirt, sand and paths).
+    constexpr float MinimumReliefSurface = 3.0f;
+    return {(std::max)(0, depth), std::abs(offset) >= MinimumReliefSurface && desertness <= 0.5f, rockiness};
 }
-
 BlockProperties<float> World::reliefStoneBlock(int x, int y, int z, float temperature, float humidity, float firelands,
                                                float undead)
 {
     return BlockProperties<float>(rockColor(x, y, z, temperature, humidity, firelands, undead), BlockRock);
 }
 
+BlockProperties<float> World::reliefStone(BlockProperties<float> block, const ReliefSurface &relief, int x, int y,
+                                          int z, float temperature, float humidity, float firelands, float undead)
+{
+    const auto rock = reliefStoneBlock(x, y, z, temperature, humidity, firelands, undead);
+    block.color += (rock.color - block.color) * relief.rockiness;
+    if (relief.rockiness > 0.5f)
+        block.type = rock.type;
+    return block;
+}
 // The surface: lava, poison, sand, paths and beaches above 0.5 of their weights, faded towards grey (128) by the fade,
 // and cliff exposure blended at three per block of rise.
 BlockProperties<float> World::surfaceBlock(int x, int y, int z, float height, float heightWest, float heightEast,
@@ -6705,8 +6710,17 @@ BlockProperties<float> World::surfaceBlock(int x, int y, int z, float height, fl
         return block;
     }
     const int depth = floorToInt(height) - z;
-    if (relief.isStone(depth))
-        return reliefStoneBlock(x, y, z, temperature, humidity, firelands, undead);
+    // A cliff column (dropping three blocks or more) is stone to its top, so its steps show no ground-cover bands;
+    // path blocks keep their path. The stone is the block this surface would have, turned by the relief's rockiness.
+    constexpr int CliffCapDepth = 2;
+    if (relief.isStone(depth) || (depth <= 0 && relief.stoneDepth >= CliffCapDepth && path <= 0.5f)) {
+        ReliefSurface plain = relief;
+        plain.stoneDepth = 0;
+        return reliefStone(surfaceBlock(x, y, z, height, heightWest, heightEast, heightSouth, heightNorth, cliffs,
+                                        temperature, humidity, sand, fade, path, firelands, undead, enchantedForest,
+                                        lava, poison, plain),
+                           relief, x, y, z, temperature, humidity, firelands, undead);
+    }
     if (relief.grassCap && depth <= 0) {
         BlockProperties<float> cover =
             coverBlock(x, y, z, height, temperature, humidity, sand, fade, path, firelands, undead, enchantedForest);
@@ -11328,7 +11342,7 @@ void World::updateZonesState(float milliseconds)
     }
     for (std::list<Creature *>::iterator entry = m_creatures.begin(); entry != m_creatures.end(); ++entry) {
         Creature *creature = *entry;
-        creature->m_entityData.binaryToggles.active = 0;
+        creature->m_entityData.binaryToggles.active = creature->m_caged ? 1 : 0;
         creature->m_entityData.binaryToggles.attachedToFurniture = 0;
         if (creature->m_entityData.hostilityType == HostilityPlayer) {
             players.push_back(creature);

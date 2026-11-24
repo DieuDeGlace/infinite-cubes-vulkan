@@ -416,7 +416,8 @@ public:
         float lampDiameter;             // 10.0 when constructed
         unsigned char interactionState; // tested together with race and hostility type, Game::controlCharacter
         unsigned char
-            buildingModel; // Zeroed by construction and reset; synchronised as entity bit 36. No other use is known.
+            buildingModel; // Zeroed by construction and reset; synchronised as entity bit 36. Holds the HP scale
+                           // (Creature::setHpScale); the game has no other use for it.
         long long ownerId; // Creature ID looked up by Game::controlCharacter with World::creatureByID.
         long long focusId; // Creature ID.
         plasma::Vector<2, int> destination;
@@ -742,8 +743,19 @@ public:
     int displayLevel() const { return m_pyroProgression ? m_entityData.progressionLevel : m_entityData.level; }
     bool awardExperience(int xp);
     bool m_pyroProgression = false;
-    float m_hpScale = 1.0f;     // an encounter guardian's or protected actor's maximum HP multiplier
+    // An encounter guardian's, enemy's or protected actor's maximum HP multiplier. It is kept in
+    // EntityData::buildingModel (quarter steps, 0 for none), which entity updates synchronise, so a client's copy
+    // of the creature shows the same maximum as the host's.
+    void setHpScale(float scale);
+    float hpScale() const;
+    // An encounter's bounty giver, or a rescue captive while it is caged: the normal maximum HP, but hits do not lower
+    // it, so the group it waits beside cannot kill it. Kept in the same synchronised field as the HP scale.
+    void setProtected();
+    bool isProtected() const;
     float m_attackScale = 1.0f; // an encounter enemy's attack and spell power multiplier
+    // A rescue captive in its cage (World::updateEncounters): it stays active, like a cauldron's occupant, through
+    // World::update's reset of every creature's active toggle, so areEnemies and the AI skip it all frame.
+    bool m_caged = false;
     // Zeroes m_artifactSkills, sets the level to 1, then for every artifact in inventory tab 5 adds one level and one
     // point to the skill Item::artifactType selects.
     void updateLevelAndSkills();

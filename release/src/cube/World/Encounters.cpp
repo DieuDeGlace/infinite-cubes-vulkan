@@ -19,10 +19,10 @@ namespace {
 using Point = plasma::Vector<3, Fixed>;
 
 constexpr float UpdateMs = 1000.0f;
-constexpr int RandomCap = 2;            // unfinished encounters found on the player's own at once
-constexpr float PlanIntervalMs = 45000; // between encounters found on the player's own
+constexpr int RandomCap = 2;             // unfinished encounters found on the player's own at once
+constexpr float PlanIntervalMs = 120000; // between encounters found on the player's own
 constexpr double PlanNearest = 160.0, PlanFarthest = 400.0;
-constexpr double SiteSpacing = 192.0;
+constexpr double SiteSpacing = 450.0;     // between any two encounter sites
 constexpr double StageDistance = 200.0;   // actors exist within this
 constexpr double UnstageDistance = 320.0; // and leave beyond this
 constexpr double ForgetDistance = 900.0;  // an encounter nobody asked for is dropped beyond this
@@ -30,7 +30,7 @@ constexpr float TownKeepOut = 64.0f;
 constexpr double SackDistance = 56.0;
 constexpr float GuardianHpScale = 3.0f;
 constexpr float GuardianSize = 1.3f;
-constexpr float ProtectedHpScale = 50.0f; // captives and bounty givers are not meant to fall
+constexpr float ProtectedHpScale = 0.0f; // marks bounty givers, who take no damage (Creature::setProtected)
 constexpr double EnemySampleRange = 400.0;
 constexpr double LandmarkReach = 160.0; // a landmark group gathers as the player comes this close
 constexpr int LandmarkCap = 2;          // unfinished landmark groups at once
@@ -334,10 +334,13 @@ void World::stageEncounter(Encounter &encounter)
         data.origin = data.position;
         data.region = findRegion(at[0], at[1]);
         data.progressionLevel = hostility == HostilityEnemy ? encounter.progressionLevel : 1;
-        creature->m_hpScale = hpScale;
         if (hostility == HostilityEnemy) {
-            creature->m_hpScale *= Encounter::healthPremium(difficulty);
+            creature->setHpScale(hpScale * Encounter::healthPremium(difficulty));
             creature->m_attackScale = Encounter::damagePremium(difficulty);
+        } else if (hpScale == ProtectedHpScale) {
+            creature->setProtected();
+        } else {
+            creature->setHpScale(hpScale);
         }
         creature->m_pyroProgression = m_pyroProgression;
         data.hp = creature->maxHP();
@@ -397,9 +400,10 @@ void World::stageEncounter(Encounter &encounter)
             if (Creature *cage = creatureByID(encounter.actors[Encounter::Object]))
                 cage->m_entityData.interactionState = encounter.opened ? 1 : 0;
         }
+        // The captive has normal health: while caged it is held like a gnome in a cauldron, so enemies ignore it.
         if (!encounter.rewarded && !present(encounter.actors[Encounter::Npc]))
             spawn(Encounter::Npc, HostilityFriendlyNpc, randomRace(friends.race), encounter.level, encounter.site, 1.0f,
-                  ProtectedHpScale, friends);
+                  1.0f, friends);
         break;
     case Encounter::Hill:
     case Encounter::Camp:
@@ -495,6 +499,18 @@ void World::updateEncounters(float milliseconds)
             captive->m_entityData.velocity = plasma::Vector<3, float>(0.0f, 0.0f, 0.0f);
             captive->m_entityData.acceleration = captive->m_entityData.velocity;
             captive->m_entityData.currentAbility = AbilitySit;
+            // Held like a cauldron's or cage's occupant: areEnemies and the AI skip an active creature, and m_caged
+            // keeps it active through World::update's reset. Hits that reach it anyway do not lower its health.
+            captive->m_caged = true;
+            captive->m_entityData.binaryToggles.active = 1;
+            if (!captive->isProtected())
+                captive->setProtected();
+        } else if (captive && captive->m_caged) {
+            // Released: enemies may target and hurt it again, as with an occupant leaving a cauldron.
+            captive->m_caged = false;
+            captive->m_entityData.binaryToggles.active = 0;
+            captive->m_entityData.currentAbility = AbilityNone;
+            captive->setHpScale(1.0f);
         }
     }
 

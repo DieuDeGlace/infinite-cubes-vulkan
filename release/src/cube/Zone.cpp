@@ -1214,17 +1214,13 @@ void Zone::setBlock(int x, int y, int z, const Block &block)
         column->setBlock(z - base, block);
     }
     for (int below = z + 1; below < base; below++) {
-        Block generated;
-        if (column->m_reliefSurface.stoneDepth > 0 &&
-            column->m_reliefSurface.isStone((int)std::floor(column->m_height) - below)) {
-            generated = m_world->reliefStoneBlock(x, y, below, column->m_temperature, column->m_humidity,
-                                                  column->m_firelands, column->m_undead);
-        } else {
-            generated =
-                m_world->columnBlock(x, y, below, column->m_mountainCliffs, column->m_temperature, column->m_humidity,
-                                     column->m_firelands, column->m_undead, column->m_enchantedForest);
-        }
-        column->setBlock(below - column->m_baseZ, generated);
+        BlockProperties<float> generated =
+            m_world->columnBlock(x, y, below, column->m_mountainCliffs, column->m_temperature, column->m_humidity,
+                                 column->m_firelands, column->m_undead, column->m_enchantedForest);
+        if (column->m_reliefSurface.isStone((int)std::floor(column->m_height) - below))
+            generated = m_world->reliefStone(generated, column->m_reliefSurface, x, y, below, column->m_temperature,
+                                             column->m_humidity, column->m_firelands, column->m_undead);
+        column->setBlock(below - column->m_baseZ, Block(generated));
     }
 }
 
@@ -2064,7 +2060,8 @@ void Zone::generate()
             const float nativeHeight = m_world->height(
                 x, y, elevation, column.m_mountainCliffs, column.m_valleyWater, column.m_lavaChannels,
                 column.m_poisonChannels, column.m_sandAmount, column.m_streetAmount, column.m_mountains, &info, 0);
-            const float relief = m_world->terrainOffset(x, y, nativeHeight, sample, info, roadDistance);
+            float rockiness = 0.0f;
+            const float relief = m_world->terrainOffset(x, y, nativeHeight, sample, info, roadDistance, &rockiness);
             const float terrainHeight = nativeHeight + relief;
             column.m_height = terrainHeight;
 
@@ -2087,9 +2084,8 @@ void Zone::generate()
                 float heightEast = nearbyHeight(x + 1, y);
                 float heightSouth = nearbyHeight(x, y - 1);
                 float heightNorth = nearbyHeight(x, y + 1);
-                column.m_reliefSurface =
-                    World::reliefSurface(m_world->m_alphaTerrain != nullptr, relief, terrainHeight, heightWest,
-                                         heightEast, heightSouth, heightNorth, desertness);
+                column.m_reliefSurface = World::reliefSurface(relief, rockiness, terrainHeight, heightWest, heightEast,
+                                                              heightSouth, heightNorth, desertness);
                 int ground = floor(terrainHeight);
                 Block surface;
                 surface = m_world->surfaceBlock(x, y, ground, terrainHeight, heightWest, heightEast, heightSouth,
