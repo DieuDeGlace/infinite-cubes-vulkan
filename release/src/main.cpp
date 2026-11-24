@@ -1005,7 +1005,7 @@ int WINAPI WinMain(HINSTANCE programInstance, HINSTANCE, LPSTR, int showCommand)
 {
     try {
         const int result = runGame(programInstance, showCommand);
-        // A new terrain or biome size: the next run opens that profile's saves.
+        // A new terrain or biome size: the next run creates the world with it.
         if (s_restartGame) {
             s_startupLog.close();
             startAgain();

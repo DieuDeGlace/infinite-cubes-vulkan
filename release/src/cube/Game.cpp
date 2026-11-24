@@ -14,6 +14,7 @@
 #include <algorithm>
 #include <array>
 #include <chrono>
+#include <filesystem>
 #include <iostream>
 #include <memory>
 #include <mutex>
@@ -280,7 +281,11 @@ Game::Game(World *world, WorldMap *worldMap, gfx::Renderer *renderer, plasma::En
     }
     memset(m_keyStates, 0, sizeof(m_keyStates));
     std::cout << "load characters" << std::endl;
-    m_charactersDatabase.open(std::string(m_world->saveDirectory()) + "/characters.db");
+    // One character list for every terrain and biome size; each profile keeps only its worlds (World::saveDirectory).
+    std::error_code saveError;
+    std::filesystem::create_directories("Save", saveError);
+    m_charactersDatabase.open("Save/characters.db");
+    mergeProfileCharacters();
     BytesIO data;
     if (m_charactersDatabase.read("num", data)) {
         int count = 0;
@@ -721,7 +726,7 @@ void Game::applyOptions(const Options &options)
     m_musicVolume = (float)options.musicVolume * 0.01f;
     LeaveCriticalSection(&m_musicCriticalSection);
     m_world->leaveZoneMeshes();
-    // The world's terrain and biome size choose its save folder (World::saveDirectory).
+    // The world is created with its terrain and biome size (main.cpp, AndroidMain.cpp).
     const bool profileChanged = (m_options.alphaTerrain != 0) != (m_world->m_alphaTerrain != nullptr) ||
                                 (m_options.largerBiomes != 0) != m_world->m_largerBiomes;
     if (profileChanged) {
@@ -2414,6 +2419,49 @@ void Game::loadCharacter(int slot, Creature *creature)
     }
     LeaveCriticalSection(&m_characterCriticalSection);
     m_world->leaveZoneMeshes();
+}
+
+void Game::mergeProfileCharacters()
+{
+    // The profile folders of World::saveDirectory other than Save itself.
+    static const char *const ProfileDirectories[] = {"Save/AlphaTerrain-v1", "Save/Biomes150-v1",
+                                                     "Save/AlphaTerrain-v1-Biomes150"};
+    int count = 0;
+    BytesIO countData;
+    if (m_charactersDatabase.read("num", countData))
+        countData.read(count);
+    for (const char *directory : ProfileDirectories) {
+        const std::filesystem::path path = std::filesystem::path(directory) / "characters.db";
+        std::error_code error;
+        // The mark keeps a file that could not be renamed from being merged twice.
+        const std::string mark = std::string("merged ") + directory;
+        BytesIO marked;
+        if (!std::filesystem::is_regular_file(path, error) || m_charactersDatabase.read(mark, marked))
+            continue;
+        Database profile;
+        if (!profile.open(path.string()))
+            continue;
+        int profileCount = 0;
+        BytesIO data;
+        if (profile.read("num", data))
+            data.read(profileCount);
+        for (int slot = 0; slot < profileCount; slot++) {
+            BytesIO record;
+            if (profile.read(std::to_string(slot), record))
+                m_charactersDatabase.write(std::to_string(count++), record);
+        }
+        profile.close();
+        BytesIO total;
+        total.write(count);
+        BytesIO done;
+        done.write(profileCount);
+        m_charactersDatabase.writeBatch({{"num", total}, {mark, done}});
+        // Kept as a backup; the next start finds nothing to merge.
+        std::filesystem::path merged = path;
+        merged += ".merged";
+        std::filesystem::rename(path, merged, error);
+        std::cout << "merged " << profileCount << " characters from " << path.string() << std::endl;
+    }
 }
 
 void Game::resumeCharacter()

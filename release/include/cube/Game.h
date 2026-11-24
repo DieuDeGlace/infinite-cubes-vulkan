@@ -133,8 +133,8 @@ public:
 
     void applyControls(const Controls &controls);
     // Copies the options under the world's zone mesh lock, saves them and sets m_musicVolume under
-    // m_musicCriticalSection. A new terrain or biome size opens another save profile: the character is saved and the
-    // game shuts down with m_restart set, to start again on that profile.
+    // m_musicCriticalSection. The terrain and biome size are fixed when the world is created, so a new one saves the
+    // character and shuts the game down with m_restart set, to start again with it.
     void applyOptions(const Options &options);
     // The answer chosen in the question widget for creature (null: only clears the widget): "change_specialization?"
     // toggles the local creature's specialization and makes the speech widget say so, "rest_inn?" pays 10 gold for an
@@ -197,6 +197,9 @@ public:
     // given rarity and, for rarity 0, the category 28 and 11 ones (one of them by class).
     void learnFormulas(int rarity);
     void loadCharacter(int slot, Creature *creature);
+    // Characters are shared by every terrain and biome size, in Save/characters.db. Appends the characters of a
+    // profile's own characters.db (from builds that kept one per profile) and renames that file characters.db.merged.
+    void mergeProfileCharacters();
     // Selects the indexed map-marked creature.
     Creature *markedCreature();
     // Applies input acceleration and jump or glide controls.
@@ -358,7 +361,7 @@ public:
     int m_width;            // Window size set by updateResolution.
     int m_height;
     bool m_shutdown;
-    // With m_shutdown: start the game again, on the save profile of the options now set (applyOptions).
+    // With m_shutdown: start the game again, with the terrain and biome size now set (applyOptions).
     bool m_restart = false;
     plasma::Vector<2, float> m_gamepadWalkVector;
     plasma::Vector<2, float> m_gamepadTurnVector;
