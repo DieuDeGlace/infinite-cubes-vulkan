@@ -91,7 +91,12 @@ public:
     virtual void setGlobalIllumination(bool enabled) {}
     virtual void setSunShadows(bool enabled) {}
     virtual void setMovingLeaves(bool enabled) {}
-    virtual void drawSunMap(const plasma::Vector<3, float> &direction, const plasma::Vector<3, cube::Fixed> &focus) {}
+    void setMoonLight(bool enabled) { m_moonLight = enabled; }
+    // strength scales the shadows: 1 for the sun, MoonShadowStrength for the moon, whose light gives no indirect
+    // bounce.
+    virtual void drawSunMap(const plasma::Vector<3, float> &direction, const plasma::Vector<3, cube::Fixed> &focus,
+                            float strength, bool reflective)
+    {}
     virtual void setHighlight(const plasma::Vector<4, float> &value) {}
     const bool m_alphaLighting;
 
@@ -418,6 +423,7 @@ protected:
     // Daylight value.
     float m_daylight;
     plasma::Vector<4, float> m_tint; // not set by the constructor; setLightOrigin's argument
+    bool m_moonLight = true;         // Options::moonLight
 };
 
 }

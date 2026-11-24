@@ -129,11 +129,39 @@ static const float BeamVisibilityRadius = 200.0f;
 static const float MaximumBeamRange = 100.0f;
 static const float SupportBeamWidth = 0.1f;
 static const float ElementalBeamWidth = 0.25f;
+// The moon of MoonandShadow's MoonLight, opposite the sun: it takes over the light while it climbs to this elevation
+// (sine; 30 degrees, two hours after moonrise), adds this share of its bluish front and back light and casts shadows of
+// this strength (the sun's are 1).
+static const float MoonFadeElevation = 0.5f;
+static const float MoonBrightness = 0.04f;
+static const float MoonShadowStrength = 0.6f;
+static const float MoonFrontColor[3] = {0.32f, 0.38f, 0.5f};
+static const float MoonBackColor[3] = {0.07f, 0.085f, 0.12f};
 
 // The vector scaled to length 1.
 static inline plasma::Vector<3, float> normalized(const plasma::Vector<3, float> &vector)
 {
     return vector * (1.0f / sqrtf(vector[0] * vector[0] + vector[1] * vector[1] + vector[2] * vector[2]));
+}
+
+// The unit direction a fraction t of the way from unit a to unit b across the sky. Opposite directions pass overhead
+// instead of through the ground.
+static plasma::Vector<3, float> blendSkyDirection(const plasma::Vector<3, float> &a, const plasma::Vector<3, float> &b,
+                                                  float t)
+{
+    const auto slerp = [](const plasma::Vector<3, float> &x, const plasma::Vector<3, float> &y, float u) {
+        const float angle = acosf((std::max)(-1.0f, (std::min)(1.0f, x.dot(y))));
+        const float s = sinf(angle);
+        if (s <= 1e-4f)
+            return normalized(x * (1.0f - u) + y * u);
+        return x * (sinf((1.0f - u) * angle) / s) + y * (sinf(u * angle) / s);
+    };
+    plasma::Vector<3, float> middle = a + b;
+    if (middle.squaredLength() < 0.01f)
+        middle = plasma::Vector<3, float>(0.0f, 0.0f, 1.0f);
+    else
+        middle = normalized(middle);
+    return t < 0.5f ? slerp(a, middle, t * 2.0f) : slerp(middle, b, t * 2.0f - 1.0f);
 }
 
 // A direction turned by the matrix's upper 3x3 part (no translation).
@@ -4033,6 +4061,21 @@ void Renderer::render(const plasma::Vector<3, cube::Fixed> &cameraPosition,
         const auto direction = alpha::sunDirection(timeOfDay);
         sunDirection = plasma::Vector<3, float>(direction.x, direction.y, direction.z);
     }
+    // At night the moon, opposite the sun, takes over: as it climbs, the light turns across the sky towards it and
+    // gains a little bluish light, so nothing jumps at moonrise or moonset. Its shadows fade in with it.
+    const plasma::Vector<3, float> moonDirection = -sunDirection;
+    const float moonRise = (std::max)(0.0f, (std::min)(1.0f, moonDirection[2] / MoonFadeElevation));
+    const float moonWeight = m_moonLight ? moonRise * moonRise * (3.0f - 2.0f * moonRise) : 0.0f;
+    plasma::Vector<3, float> lightDirection = sunDirection;
+    plasma::Vector<4, float> frontColor = m_lightFrontColor;
+    plasma::Vector<4, float> backColor = m_lightBackColor;
+    if (moonWeight > 0.0f) {
+        lightDirection = blendSkyDirection(sunDirection, moonDirection, moonWeight);
+        for (int i = 0; i < 3; i++) {
+            frontColor[i] = (std::min)(1.0f, frontColor[i] + MoonFrontColor[i] * moonWeight * MoonBrightness);
+            backColor[i] = (std::min)(1.0f, backColor[i] + MoonBackColor[i] * moonWeight * MoonBrightness);
+        }
+    }
 
     beginScene();
     beginWorldEffects(m_alphaLighting ? alpha::sunlight(timeOfDay) : 1.0f,
@@ -4044,7 +4087,7 @@ void Renderer::render(const plasma::Vector<3, cube::Fixed> &cameraPosition,
     setWhite(0.0f);
     setMaterialColor(m_tint);
     setAlpha(1.0f);
-    setLight(m_lightFrontColor, m_lightBackColor, sunDirection, m_ambientColor);
+    setLight(frontColor, backColor, lightDirection, m_ambientColor);
     setShininess(0.0f);
     setGlow(0.0f);
     setDepthOffset(0.0f);
@@ -4084,14 +4127,15 @@ void Renderer::render(const plasma::Vector<3, cube::Fixed> &cameraPosition,
     collectSprites(*(const plasma::Vector<3, int> *)lookedAtBlock, flags);
     collectLights(lights);
     if (!worldHidden)
-        drawSunMap(sunDirection, focusPosition);
+        drawSunMap(lightDirection, focusPosition, moonWeight > 0.0f ? MoonShadowStrength * moonWeight : 1.0f,
+                   moonWeight <= 0.0f);
     unsigned int afterCollect = timeGetTime();
 
     activateMode(RendererMode_OpaqueFront);
     setViewMatrix(m_viewMatrix);
     setProjectionMatrix(m_projectionMatrix);
     setAmbientColor(m_ambientColor);
-    renderChunks(m_lightFrontColor, m_lightBackColor, sunDirection, m_ambientColor);
+    renderChunks(frontColor, backColor, lightDirection, m_ambientColor);
     unsigned int afterChunks = timeGetTime();
     renderSprites(m_worldBatch, SpritePassFlagZoneLights);
     renderSprites(m_underwaterPlantBatch, SpritePassFlagZoneLights);
@@ -4100,7 +4144,7 @@ void Renderer::render(const plasma::Vector<3, cube::Fixed> &cameraPosition,
     renderEffects();
     if (!worldHidden)
         renderParticles(particles);
-    setLight(m_lightFrontColor, m_lightBackColor, sunDirection, m_ambientColor);
+    setLight(frontColor, backColor, lightDirection, m_ambientColor);
     renderWater(submerged);
     unsigned int afterWater = timeGetTime();
     drawGroundSpots();

@@ -273,6 +273,7 @@ Game::Game(World *world, WorldMap *worldMap, gfx::Renderer *renderer, plasma::En
     m_controls.load();
     m_world->init(m_seed, m_worldName);
     m_renderer->setMovingLeaves(m_options.movingLeaves != 0);
+    m_renderer->setMoonLight(m_options.moonLight != 0);
     std::cout << "preload sounds" << std::endl;
     for (int i = 0; i < 125; i++) {
         soundId(i);
@@ -714,11 +715,20 @@ void Game::applyOptions(const Options &options)
     m_renderer->setSunShadows(m_options.sunShadows != 0);
     m_renderer->setGlobalIllumination(m_options.rsmGI != 0);
     m_renderer->setMovingLeaves(m_options.movingLeaves != 0);
+    m_renderer->setMoonLight(m_options.moonLight != 0);
     m_options.save();
     EnterCriticalSection(&m_musicCriticalSection);
     m_musicVolume = (float)options.musicVolume * 0.01f;
     LeaveCriticalSection(&m_musicCriticalSection);
     m_world->leaveZoneMeshes();
+    // The world's terrain and biome size choose its save folder (World::saveDirectory).
+    const bool profileChanged = (m_options.alphaTerrain != 0) != (m_world->m_alphaTerrain != nullptr) ||
+                                (m_options.largerBiomes != 0) != m_world->m_largerBiomes;
+    if (profileChanged) {
+        saveCharacter();
+        m_restart = true;
+        m_shutdown = true;
+    }
 }
 
 void Game::ask(Creature *creature, const std::string &answer)

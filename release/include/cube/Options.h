@@ -45,6 +45,7 @@ struct Options {
     int sunShadows;     // Directional shadows from the world geometry.
     int rsmGI;          // One bounce of sunlight from nearby surfaces.
     int movingLeaves;   // Tree leaves sway in the wind.
+    int moonLight;      // At night the moon lights the world and, with sunShadows, casts the shadows.
     int temporalAA;     // Scene TAA before the HUD.
     int spatialAA;      // Scene SMAA Ultra.
 

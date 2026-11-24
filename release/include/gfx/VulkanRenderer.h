@@ -33,7 +33,8 @@ public:
     void setGlobalIllumination(bool enabled) override;
     void setSunShadows(bool enabled) override;
     void setMovingLeaves(bool enabled) override;
-    void drawSunMap(const plasma::Vector<3, float> &direction, const plasma::Vector<3, cube::Fixed> &focus) override;
+    void drawSunMap(const plasma::Vector<3, float> &direction, const plasma::Vector<3, cube::Fixed> &focus,
+                    float strength, bool reflective) override;
 
     void setWorldMatrix(const plasma::Matrix<float> &matrix) override;
     void setViewMatrix(const plasma::Matrix<float> &matrix) override;

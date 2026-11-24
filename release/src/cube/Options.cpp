@@ -43,6 +43,7 @@ Options::Options()
     sunShadows = 0;
     rsmGI = 0;
     movingLeaves = 1;
+    moonLight = 1;
     temporalAA = 0;
     spatialAA = 0;
 }
@@ -169,6 +170,9 @@ void Options::read(std::istream &file)
         if (key == "movingLeaves") {
             file >> movingLeaves;
         }
+        if (key == "moonLight") {
+            file >> moonLight;
+        }
         if (key == "temporalAA") {
             file >> temporalAA;
         }
@@ -231,6 +235,7 @@ void Options::write(std::ostream &file) const
     file << "sunShadows " << sunShadows << std::endl;
     file << "rsmGI " << rsmGI << std::endl;
     file << "movingLeaves " << movingLeaves << std::endl;
+    file << "moonLight " << moonLight << std::endl;
     file << "temporalAA " << temporalAA << std::endl;
     file << "spatialAA " << spatialAA << std::endl;
 }

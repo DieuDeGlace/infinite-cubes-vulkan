@@ -214,9 +214,11 @@ void VulkanRenderer::beginWater(bool submerged)
     m_uniforms.waterSurface = {phaseX, phaseY, brightness, submerged ? 1.0f : 0.0f};
 }
 
-void VulkanRenderer::drawSunMap(const plasma::Vector<3, float> &direction, const plasma::Vector<3, cube::Fixed> &focus)
+void VulkanRenderer::drawSunMap(const plasma::Vector<3, float> &direction, const plasma::Vector<3, cube::Fixed> &focus,
+                                float strength, bool reflective)
 {
-    if ((!m_sunShadows && !m_rsmGI) || direction[2] <= 0.08f || m_zones.empty())
+    const bool rsmGI = m_rsmGI && reflective;
+    if ((!m_sunShadows && !rsmGI) || direction[2] <= 0.08f || strength <= 0.0f || m_zones.empty())
         return;
 #ifdef __ANDROID__
     constexpr uint32_t Size = 1536;
@@ -228,7 +230,7 @@ void VulkanRenderer::drawSunMap(const plasma::Vector<3, float> &direction, const
     constexpr uint32_t ReflectiveSize = 512;
     constexpr float DepthRange = 384.0f;
     static_assert(Size % ReflectiveSize == 0);
-    const double texelSize = 2.0 * Radius / (m_rsmGI ? ReflectiveSize : Size);
+    const double texelSize = 2.0 * Radius / (rsmGI ? ReflectiveSize : Size);
     // Keep the rotating texel grid near the player so the sun never rotates it around a distant world origin.
     if (!m_shadowAnchor)
         m_shadowAnchor = focus;
@@ -298,11 +300,11 @@ void VulkanRenderer::drawSunMap(const plasma::Vector<3, float> &direction, const
         drawModels(m_worldBatch.m_mirroredInstances);
         m_context.endSurface();
         const float daylight = std::clamp((direction[2] - 0.08f) / 0.25f, 0.0f, 1.0f);
-        m_uniforms.effects[2] = daylight * daylight * (3.0f - 2.0f * daylight);
+        m_uniforms.effects[2] = strength * daylight * daylight * (3.0f - 2.0f * daylight);
         m_uniforms.effects[3] = 0.045f / DepthRange;
         m_context.bindTexture(2, m_sunMap);
     }
-    if (m_rsmGI) {
+    if (rsmGI) {
         if (!m_reflectance) {
             m_reflectance = m_context.createSurface(ReflectiveSize, ReflectiveSize, false);
             m_reflectiveDepth = m_context.createSampledDepth({ReflectiveSize, ReflectiveSize});
@@ -315,7 +317,7 @@ void VulkanRenderer::drawSunMap(const plasma::Vector<3, float> &direction, const
         m_context.bindTexture(1, m_reflectance);
         m_context.bindTexture(3, m_reflectiveDepth);
     }
-    m_uniforms.shadowProjection = {1.0f / Size, Radius, DepthRange, m_rsmGI ? 1.0f / ReflectiveSize : 0.0f};
+    m_uniforms.shadowProjection = {1.0f / Size, Radius, DepthRange, rsmGI ? 1.0f / ReflectiveSize : 0.0f};
 }
 
 void VulkanRenderer::activateMode(int mode)

@@ -497,6 +497,8 @@ public:
 
     bool running() const { return m_session && !m_paused && m_app->window; }
     bool finished() const { return m_session && m_session->game->m_shutdown; }
+    // A new terrain or biome size (Game::applyOptions): the next session opens that profile's saves.
+    bool restarting() const { return finished() && m_session->game->m_restart; }
 
     int32_t input(const AInputEvent *event)
     {
@@ -872,8 +874,10 @@ void android_main(android_app *app)
             if (!game.running())
                 continue;
             game.frame();
-            // "Exit Game" in the system menu.
-            if (game.finished())
+            // A changed save profile starts a new session; "Exit Game" in the system menu ends the activity.
+            if (game.restarting())
+                game.close();
+            else if (game.finished())
                 ANativeActivity_finish(app->activity);
         } catch (const std::exception &error) {
             game.fail(error);

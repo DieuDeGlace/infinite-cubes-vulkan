@@ -59,6 +59,8 @@ bool focus = true;
 static cube::Options s_options;
 // "log_startup.txt": every step of the start-up is written to it.
 static std::ofstream s_startupLog("log_startup.txt");
+// Game::m_restart when the game shut down: WinMain starts the program again.
+static bool s_restartGame = false;
 
 // Handles messages for the main and splash windows. Input is forwarded to the engine and game; destroying the splash
 // window does not terminate the program.
@@ -957,6 +959,7 @@ static int runGame(HINSTANCE programInstance, int showCommand)
                         draw();
                     }
                 }
+                s_restartGame = game->m_restart;
                 game = nullptr;
                 s_startupLog << "Shutting down" << std::endl;
                 context.waitIdle();
@@ -981,10 +984,33 @@ static int runGame(HINSTANCE programInstance, int showCommand)
     return 0;
 }
 
+// Starts this executable again with the same command line and working directory.
+static void startAgain()
+{
+    wchar_t path[MAX_PATH];
+    const DWORD length = GetModuleFileNameW(nullptr, path, MAX_PATH);
+    if (!length || length == MAX_PATH)
+        return;
+    std::wstring commandLine = GetCommandLineW();
+    STARTUPINFOW startup {};
+    startup.cb = sizeof(startup);
+    PROCESS_INFORMATION process {};
+    if (CreateProcessW(path, commandLine.data(), nullptr, nullptr, FALSE, 0, nullptr, nullptr, &startup, &process)) {
+        CloseHandle(process.hThread);
+        CloseHandle(process.hProcess);
+    }
+}
+
 int WINAPI WinMain(HINSTANCE programInstance, HINSTANCE, LPSTR, int showCommand)
 {
     try {
-        return runGame(programInstance, showCommand);
+        const int result = runGame(programInstance, showCommand);
+        // A new terrain or biome size: the next run opens that profile's saves.
+        if (s_restartGame) {
+            s_startupLog.close();
+            startAgain();
+        }
+        return result;
     } catch (const std::exception &error) {
         game = nullptr;
         engine = nullptr;

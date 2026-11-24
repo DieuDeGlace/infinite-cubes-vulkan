@@ -133,7 +133,8 @@ public:
 
     void applyControls(const Controls &controls);
     // Copies the options under the world's zone mesh lock, saves them and sets m_musicVolume under
-    // m_musicCriticalSection.
+    // m_musicCriticalSection. A new terrain or biome size opens another save profile: the character is saved and the
+    // game shuts down with m_restart set, to start again on that profile.
     void applyOptions(const Options &options);
     // The answer chosen in the question widget for creature (null: only clears the widget): "change_specialization?"
     // toggles the local creature's specialization and makes the speech widget say so, "rest_inn?" pays 10 gold for an
@@ -357,6 +358,8 @@ public:
     int m_width;            // Window size set by updateResolution.
     int m_height;
     bool m_shutdown;
+    // With m_shutdown: start the game again, on the save profile of the options now set (applyOptions).
+    bool m_restart = false;
     plasma::Vector<2, float> m_gamepadWalkVector;
     plasma::Vector<2, float> m_gamepadTurnVector;
     plasma::Vector<3, double> m_cameraAngle;
