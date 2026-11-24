@@ -40,6 +40,10 @@ static const float ZoneCullMarginBlocks = 64.0f;
 static const int GroundItemLightElevation = 3;
 static const float GroundItemLightRadius = 16.0f;
 static const float PlantLightVisibilityRadius = 16.0f;
+// Plants farther than these (in blocks) draw cube::Sprite::lowDetail's joined voxels, level 1 and then level 2: there
+// a voxel of a grass model covers about a pixel, and the joined ones keep the outline with a quarter and a sixteenth
+// of the faces.
+static const float PlantDetailDistances[2] = {40.0f, 80.0f};
 static const float LampDaylightCutoff = 0.4f;
 static const float ComboLightRadius = 10.0f;
 static const float RightWeaponComboLightGain = 0.3f;
@@ -1028,6 +1032,13 @@ void Renderer::collectSprites(const plasma::Vector<3, int> &lookedAt, int flags)
                     float halfHeight = (float)sprite->sizeZ() * 0.5f * plant.scale;
                     if (!isSphereVisible(raised(plant.position, halfHeight), radius, m_effectViewDistance))
                         continue;
+                    // Far plants draw the model with joined voxels; the lights keep every voxel.
+                    const float squaredDistance = squaredBlocks(plant.position - m_cameraPosition);
+                    int detail = 0;
+                    while (!(plant.flags & cube::PlantFlagEmissive) && detail < 2 &&
+                           squaredDistance > PlantDetailDistances[detail] * PlantDetailDistances[detail])
+                        detail++;
+                    cube::Sprite *drawn = sprite->lowDetail(detail);
 
                     plasma::Matrix<float> model;
                     model.identity();
@@ -1057,6 +1068,11 @@ void Renderer::collectSprites(const plasma::Vector<3, int> &lookedAt, int flags)
                     }
                     model.rotateZ(plant.rotation);
                     model.translate((float)sprite->sizeX() * -0.5f, (float)sprite->sizeY() * -0.5f, 0.0f);
+                    // A joined voxel spans 2 or 4 of the model's from the same corner.
+                    if (drawn != sprite) {
+                        const float factor = (float)(1 << detail);
+                        model.scale(factor, factor, factor);
+                    }
 
                     // Flag 1: it shines (full light, and the glow value); otherwise it takes the light stored with it.
                     plasma::Vector<4, float> color = m_tint;
@@ -1068,10 +1084,10 @@ void Renderer::collectSprites(const plasma::Vector<3, int> &lookedAt, int flags)
                     // Flag 8 puts it into the second batch.
                     if (plant.flags & cube::PlantFlagUnderwater) {
                         m_underwaterPlantBatch.add(
-                            sprite, model, color, attenuation(raised(plant.position, halfHeight), m_effectViewDistance),
+                            drawn, model, color, attenuation(raised(plant.position, halfHeight), m_effectViewDistance),
                             (float)(plant.flags & cube::PlantFlagEmissive), 0.0f, 0.0f, 0.0f);
                     } else {
-                        m_worldBatch.add(sprite, model, color,
+                        m_worldBatch.add(drawn, model, color,
                                          attenuation(raised(plant.position, halfHeight), m_effectViewDistance),
                                          (float)(plant.flags & cube::PlantFlagEmissive), 0.0f, 0.0f, 0.0f);
                     }

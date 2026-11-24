@@ -45,6 +45,11 @@ public:
     // Draws the mesh with whatever is bound (the renderer's shadow and outline passes bind once and draw several
     // times).
     void drawBound();
+    // The model with every 2 x 2 x 2 voxels (level 1) or 4 x 4 x 4 voxels (level 2) joined into one, for drawing far
+    // away with a quarter or a sixteenth of the faces: a joined voxel is filled where any of its voxels is, in their
+    // average colour. Drawn scaled by 2 or 4 from the same corner, it covers the model's box. Built on the first
+    // request and kept until the voxels are replaced.
+    Sprite *lowDetail(int level);
     void finalize();
     // Whether the voxel colour counts as empty: the empty colour, or a marker colour unless showMarkers.
     bool isEmpty(const plasma::Vector<3, unsigned char> *voxel, bool showMarkers);
@@ -134,6 +139,10 @@ public:
     bool m_fullIntensity;
     int m_shadingRadius; // 3; the sampling radius of vertexExposure
     plasma::Vector<3, unsigned char> m_tint;
+    Sprite *m_lowDetail[2] = {nullptr, nullptr}; // lowDetail's levels 1 and 2; owned
+
+private:
+    void clearLowDetail();
 };
 
 }
