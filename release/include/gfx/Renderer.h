@@ -268,8 +268,8 @@ public:
 protected:
     cube::World *m_world;
     cube::WorldMap *m_worldMap; // constructor argument (WinMain passes the world map)
-    // One sprite's instances for drawSpriteRuns, and renderTranslucentRuns' instances by sprite (ordinary and
-    // mirrored); kept to reuse their storage.
+    // One sprite's instances for drawSpriteRuns (kept to reuse its storage), and renderTranslucentRuns' instances by
+    // sprite (ordinary and mirrored), rebuilt each frame.
     std::vector<const SpriteBatch::Instance *> m_spriteInstances;
     std::map<cube::Sprite *, std::vector<const SpriteBatch::Instance *>> m_translucentRuns[2];
     // Effect records passed to their respective drawing functions; some fields have unknown meanings.

@@ -278,17 +278,41 @@ void VulkanRenderer::drawSunMap(const plasma::Vector<3, float> &direction, const
             }
         }
     };
-    // Each model's instances cast their shadows in one instanced draw.
+    // Whether any part of the instance projects into the map. Plants are collected out to the full effect distance,
+    // mostly beyond the map's radius, where their vertices would be transformed only to be clipped.
+    const auto reachesMap = [&](const cube::Sprite *sprite, const SpriteBatch::Instance &instance) {
+        const plasma::Matrix<float> &matrix = instance.matrix;
+        const plasma::Vector<3, float> half(sprite->m_size[0] * 0.5f, sprite->m_size[1] * 0.5f,
+                                            sprite->m_size[2] * 0.5f);
+        const plasma::Vector<3, float> center = matrix * half;
+        // Each axis of the box moves a corner from the centre by at most its column's length times the half size;
+        // one block more covers the sway and the leaves' flutter.
+        float reach = 1.0f;
+        for (int axis = 0; axis < 3; ++axis) {
+            const float *column = &matrix[axis * 4];
+            reach += std::sqrt(column[0] * column[0] + column[1] * column[1] + column[2] * column[2]) * half[axis];
+        }
+        // The first two rows of the shadow transform give the map's coordinates (-1 to 1) per block over Radius.
+        for (int row = 0; row < 2; ++row) {
+            const auto &axis = m_uniforms.shadowTransform[row];
+            const float coordinate = axis[0] * center[0] + axis[1] * center[1] + axis[2] * center[2] + axis[3];
+            if (std::abs(coordinate) > 1.0f + reach / Radius)
+                return false;
+        }
+        return true;
+    };
+    // Each model's instances in the map cast their shadows in one instanced draw.
     std::vector<const SpriteBatch::Instance *> instances;
     const auto drawModels = [&](const auto &groups) {
         for (const auto &group : groups) {
             auto *sprite = group.first;
-            if (sprite->bind()) {
-                instances.clear();
-                for (const auto &instance : group.second)
+            instances.clear();
+            for (const auto &instance : group.second) {
+                if (reachesMap(sprite, instance))
                     instances.push_back(&instance);
-                drawSpriteInstances(sprite, instances.data(), instances.size());
             }
+            if (!instances.empty() && sprite->bind())
+                drawSpriteInstances(sprite, instances.data(), instances.size());
         }
     };
     if (m_sunShadows) {

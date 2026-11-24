@@ -3909,8 +3909,7 @@ void Renderer::renderTranslucentRuns(SpriteBatch &batch, int flags)
 {
     std::vector<SpriteBatch::TranslucentInstance> *lists[] = {&batch.m_translucent, &batch.m_mirroredTranslucent};
     for (int side = 0; side < 2; side++) {
-        for (auto &entry : m_translucentRuns[side])
-            entry.second.clear();
+        m_translucentRuns[side].clear();
         for (SpriteBatch::TranslucentInstance &translucent : *lists[side])
             m_translucentRuns[side][translucent.sprite].push_back(&translucent.instance);
     }

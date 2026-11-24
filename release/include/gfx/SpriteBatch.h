@@ -1,7 +1,6 @@
 // SpriteBatch groups opaque sprites by model and stores translucent sprites (alpha below 1) in vectors for ordering.
 // It keeps separate ordinary and mirrored instance groups.
 #pragma once
-#include <list>
 #include <map>
 #include <vector>
 #include "plasma/Matrix.h"
@@ -56,8 +55,8 @@ public:
                     float white, float depthOffset);
     void clear();
 
-    std::map<cube::Sprite *, std::list<Instance>> m_instances;
-    std::map<cube::Sprite *, std::list<Instance>> m_mirroredInstances;
+    std::map<cube::Sprite *, std::vector<Instance>> m_instances;
+    std::map<cube::Sprite *, std::vector<Instance>> m_mirroredInstances;
     std::vector<TranslucentInstance> m_translucent;
     std::vector<TranslucentInstance> m_mirroredTranslucent;
     plasma::Matrix<float> m_matrix; // applied to the matrix of each sprite added
