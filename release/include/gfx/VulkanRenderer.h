@@ -59,12 +59,15 @@ public:
     void setAmbientColor(const plasma::Vector<4, float> &color) override;
     void setPointLights(const std::array<plasma::Vector<4, float>, 16> &positions,
                         const std::array<plasma::Vector<4, float>, 16> &colors) override;
+    bool drawSpriteInstances(cube::Sprite *sprite, const SpriteBatch::Instance *const *instances,
+                             size_t count) override;
 
 private:
     void drawDynamic(const std::vector<TexturedVertex> &vertices, const std::vector<uint32_t> &indices);
     void beginEffects(bool textured);
 
     VulkanWorldUniforms m_uniforms;
+    std::vector<VulkanSpriteInstance> m_spriteInstances; // drawSpriteInstances' records, kept to reuse their storage
     plasma::Engine *m_engine;
     VulkanContext &m_context;
     BufferPtr m_quadVertices;

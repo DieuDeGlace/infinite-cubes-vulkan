@@ -1,10 +1,32 @@
 #include "WorldUniforms.hlsli"
 #include "World.hlsli"
 
+#if CUBE_INSTANCED
+// The instanced build (InstancedWorldVertexShader) takes each sprite's matrix, colour and alpha from its instance
+// record.
+#define worldMatrix instanceWorld
+#define materialColor instanceMaterial
+#endif
+
 PixelInput main([[vk::location(0)]] float4 position : POSITION,
-               [[vk::location(1)]] float4 color : COLOR)
+               [[vk::location(1)]] float4 color : COLOR
+#if CUBE_INSTANCED
+               , [[vk::location(3)]] float4 instanceRow0 : INSTANCE0,
+               [[vk::location(4)]] float4 instanceRow1 : INSTANCE1,
+               [[vk::location(5)]] float4 instanceRow2 : INSTANCE2,
+               [[vk::location(6)]] float4 instanceRow3 : INSTANCE3,
+               [[vk::location(7)]] float4 instanceMaterial : INSTANCE4,
+               [[vk::location(8)]] float instanceAlpha : INSTANCE5
+#endif
+               )
 {
     PixelInput output;
+#if CUBE_INSTANCED
+    const float4x4 instanceWorld = float4x4(instanceRow0, instanceRow1, instanceRow2, instanceRow3);
+    output.alpha = instanceAlpha;
+#else
+    output.alpha = alpha;
+#endif
     // The fourth normalized byte identifies an axis-aligned voxel face.
     const uint face = faceIndex(position.w);
     float3 normal = face == 0 ? float3(1, 0, 0) :

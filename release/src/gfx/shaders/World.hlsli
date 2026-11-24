@@ -14,6 +14,8 @@ struct PixelInput
     [[vk::location(6)]] float3 indirectColor : TEXCOORD5;
     [[vk::location(7)]] nointerpolation float3 worldNormal : TEXCOORD6;
     [[vk::location(8)]] float3 albedo : TEXCOORD7;
+    // The draw's alpha (each instance's own in an instanced draw).
+    [[vk::location(9)]] nointerpolation float alpha : TEXCOORD8;
 };
 
 #endif

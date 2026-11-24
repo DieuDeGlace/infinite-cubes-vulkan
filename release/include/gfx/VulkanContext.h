@@ -97,6 +97,9 @@ public:
     void bindVertex(const BufferPtr &buffer);
     void bindIndex(const BufferPtr &buffer, VkIndexType type);
     void drawIndexed(uint32_t indexCount, uint32_t firstIndex = 0, int32_t vertexOffset = 0);
+    // Draws the bound mesh once per 84-byte instance record (VulkanSpriteInstance) with the World or Shadow program;
+    // false, with nothing drawn, for any other program.
+    bool drawInstanced(uint32_t indexCount, const void *instances, uint32_t instanceCount);
     void drawTransient(const void *vertices, size_t vertexBytes, const uint32_t *indices, uint32_t indexCount);
 
 private:
@@ -157,10 +160,11 @@ private:
     std::array<VkSampler, 2> m_textureSamplers{};
     VkSampler m_sampler = VK_NULL_HANDLE;
     VkSampler m_pointSampler = VK_NULL_HANDLE;
-    std::array<VkShaderModule, 7> m_vertexShaders = {};
+    std::array<VkShaderModule, 9> m_vertexShaders = {};
     std::array<VkShaderModule, static_cast<size_t>(VulkanProgram::Count)> m_fragmentShaders = {};
+    // The last element: the pipeline reads instance records (drawInstanced).
     using PipelineKey = std::tuple<VulkanProgram, RasterizerSlot, DepthStencilSlot, BlendSlot, VkFormat, VkFormat,
-                                   VkSampleCountFlagBits>;
+                                   VkSampleCountFlagBits, bool>;
     std::map<PipelineKey, VkPipeline> m_pipelines;
 
     VkSwapchainKHR m_swapchain = VK_NULL_HANDLE;
@@ -189,6 +193,7 @@ private:
     BufferSlice m_index;
     VkIndexType m_indexType = VK_INDEX_TYPE_UINT32;
     VulkanDrawState m_state = {};
+    bool m_instanced = false; // drawInstanced's draw is being bound
     const void *m_uniforms = nullptr;
     size_t m_uniformSize = 0;
 };

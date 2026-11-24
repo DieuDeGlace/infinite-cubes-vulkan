@@ -77,6 +77,10 @@ function(add_vulkan_shader directory name profile)
   if(ANDROID AND name STREQUAL "WorldPixelShader")
     set(defines -DCUBE_MOBILE_SHADOWS=1)
   endif()
+  # A fifth argument adds a define (the instanced builds of the world and shadow vertex shaders).
+  if(ARGC GREATER 4)
+    list(APPEND defines "${ARGV4}")
+  endif()
   add_custom_command(OUTPUT "${header}" BYPRODUCTS "${binary}"
     COMMAND "${DXC_EXECUTABLE}" -spirv -fspv-target-env=vulkan1.3 -fvk-use-dx-layout
             ${defines} -T "${profile}" -E main -Fo "${binary}" "${source}"
@@ -90,6 +94,8 @@ set(world_shaders src/gfx/shaders)
 add_vulkan_shader(${world_shaders} WorldVertexShader vs_6_0)
 add_vulkan_shader(${world_shaders} WaterVertexShader vs_6_0)
 add_vulkan_shader(${world_shaders} ShadowVertexShader vs_6_0)
+add_vulkan_shader(${world_shaders} WorldVertexShader vs_6_0 Instanced -DCUBE_INSTANCED=1)
+add_vulkan_shader(${world_shaders} ShadowVertexShader vs_6_0 Instanced -DCUBE_INSTANCED=1)
 add_vulkan_shader(${world_shaders} ReflectiveShadowVertexShader vs_6_0)
 add_vulkan_shader(${world_shaders} ReflectiveShadowPixelShader ps_6_0)
 add_vulkan_shader(${world_shaders} PostVertexShader vs_6_0)

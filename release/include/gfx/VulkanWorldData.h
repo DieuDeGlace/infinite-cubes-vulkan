@@ -50,4 +50,14 @@ struct VulkanWorldUniforms {
 
 static_assert(sizeof(VulkanWorldUniforms) == 848);
 
+// One instance of an instanced sprite draw (vertex binding 1, locations 3 to 8): the world matrix's elements in
+// plasma's order, which the shaders read as its rows, the material colour and the alpha.
+struct VulkanSpriteInstance {
+    std::array<float, 16> world;
+    plasma::Vector<4, float> material;
+    float alpha;
+};
+
+static_assert(sizeof(VulkanSpriteInstance) == 84);
+
 }

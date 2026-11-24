@@ -8,7 +8,7 @@ float4 main(PixelInput input) : SV_TARGET
     float2 projectedPosition = input.clipPosition.xy / input.clipPosition.w;
     float3 sky = skyColorAt(projectedPosition);
     float3 color = lerp(input.indirectColor, input.color.rgb, sunVisibility(input.worldPosition, input.worldNormal));
-    if (shadowProjection.w > 0 && glow == 0 && alpha >= 0.99)
+    if (shadowProjection.w > 0 && glow == 0 && input.alpha >= 0.99)
     {
         // Use the voxel light already baked into the vertices to keep bounce out of closed corners.
         const float3 bounce = indirectSunlight(input.worldPosition, input.worldNormal);
@@ -27,7 +27,7 @@ float4 main(PixelInput input) : SV_TARGET
         if (shininess > 0)
             color *= 1 + 0.3 * sin(10 * (projectedPosition.y + fogGradientTranslation) +
                                     5 * projectedPosition.x + 2 * (input.normal.y + input.normal.x));
-        return float4(saturate(color), alpha);
+        return float4(saturate(color), input.alpha);
     }
     if (shininess > 0)
         // World shininess shimmer curve: amplitude 0.3, spatial frequencies 10/5/2.
@@ -42,5 +42,5 @@ float4 main(PixelInput input) : SV_TARGET
     float fog = fogAmount(input.viewPosition);
     color = lerp(color, fogColor.rgb, fog);
     color = saturate(lerp(color, sky, fog * fog * fog * fog));
-    return float4(gradeColor(color), alpha);
+    return float4(gradeColor(color), input.alpha);
 }

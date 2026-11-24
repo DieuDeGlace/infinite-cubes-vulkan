@@ -13,6 +13,8 @@
 
 #include "spirv/CloudPixelShader.h"
 #include "spirv/InterfacePixelShader.h"
+#include "spirv/InstancedShadowVertexShader.h"
+#include "spirv/InstancedWorldVertexShader.h"
 #include "spirv/InterfaceVertexShader.h"
 #include "spirv/PostCopyShader.h"
 #include "spirv/PostVertexShader.h"
@@ -40,6 +42,8 @@ constexpr VkFormat ColorFormat = VK_FORMAT_R8G8B8A8_UNORM;
 constexpr VkFormat DepthFormat = VK_FORMAT_D32_SFLOAT;
 constexpr VkDeviceSize UniformCapacity = 1024;
 constexpr VkDeviceSize StreamPageSize = 2 * 1024 * 1024;
+// drawInstanced's records: the world matrix's 16 floats, the material colour and the alpha (VulkanSpriteInstance).
+constexpr uint32_t InstanceRecordSize = 84;
 constexpr uint32_t ImageSetsPerPool = 2048;
 constexpr uint32_t BufferSetsPerPool = 64;
 constexpr std::array<uint32_t, 4> ImageBindings = {0, 1, 3, 4};
@@ -404,6 +408,8 @@ void VulkanContext::createShaders()
     m_vertexShaders[4] = create(PostVertexShader, sizeof(PostVertexShader));
     m_vertexShaders[5] = create(ReflectiveShadowVertexShader, sizeof(ReflectiveShadowVertexShader));
     m_vertexShaders[6] = create(WaterVertexShader, sizeof(WaterVertexShader));
+    m_vertexShaders[7] = create(InstancedWorldVertexShader, sizeof(InstancedWorldVertexShader));
+    m_vertexShaders[8] = create(InstancedShadowVertexShader, sizeof(InstancedShadowVertexShader));
     m_fragmentShaders[0] = create(WorldPixelShader, sizeof(WorldPixelShader));
     m_fragmentShaders[1] = create(SkyPixelShader, sizeof(SkyPixelShader));
     m_fragmentShaders[2] = create(WaterPixelShader, sizeof(WaterPixelShader));
@@ -1267,6 +1273,27 @@ void VulkanContext::drawIndexed(uint32_t indexCount, uint32_t firstIndex, int32_
     m_frame->inUse.push_back(m_index.buffer);
 }
 
+bool VulkanContext::drawInstanced(uint32_t indexCount, const void *instances, uint32_t instanceCount)
+{
+    if (m_pipelineSource || (m_state.program != VulkanProgram::World && m_state.program != VulkanProgram::Shadow))
+        return false;
+    if (!m_frame || !indexCount || !instanceCount || !m_vertex.buffer || !m_index.buffer || !m_uniforms)
+        return true;
+    const BufferSlice records = stream(instances, VkDeviceSize(instanceCount) * InstanceRecordSize, alignof(float));
+    m_instanced = true;
+    bindDrawState(m_state.program == VulkanProgram::World);
+    m_instanced = false;
+    const auto command = m_frame->command;
+    const VkBuffer buffers[] = {m_vertex.buffer->handle, records.buffer->handle};
+    const VkDeviceSize offsets[] = {m_vertex.offset, records.offset};
+    vkCmdBindVertexBuffers(command, 0, 2, buffers, offsets);
+    vkCmdBindIndexBuffer(command, m_index.buffer->handle, m_index.offset, m_indexType);
+    vkCmdDrawIndexed(command, indexCount, instanceCount, 0, 0, 0);
+    m_frame->inUse.push_back(m_vertex.buffer);
+    m_frame->inUse.push_back(m_index.buffer);
+    return true;
+}
+
 void VulkanContext::bindDrawState(bool textured)
 {
     if (m_uniformSize > UniformCapacity)
@@ -1312,13 +1339,18 @@ VkPipeline VulkanContext::pipeline()
     if (m_pipelineSource)
         return m_pipelineSource->pipeline(m_device, m_pipelineLayout, colorFormat, depthFormat, samples);
     const auto key = std::make_tuple(m_state.program, m_state.rasterizer, m_state.depth, m_state.blend, colorFormat,
-                                     depthFormat, samples);
+                                     depthFormat, samples, m_instanced);
     const auto cached = m_pipelines.find(key);
     if (cached != m_pipelines.end())
         return cached->second;
 
-    VkVertexInputBindingDescription binding {0, 8, VK_VERTEX_INPUT_RATE_VERTEX};
-    VkVertexInputAttributeDescription attributes[] = {
+    VkVertexInputBindingDescription bindings[] = {
+        {0, 8, VK_VERTEX_INPUT_RATE_VERTEX},
+        {1, InstanceRecordSize, VK_VERTEX_INPUT_RATE_INSTANCE},
+    };
+    VkVertexInputBindingDescription &binding = bindings[0];
+    // Room for the instance record's matrix rows and material colour after the mesh's own attributes.
+    VkVertexInputAttributeDescription attributes[8] = {
         {0, 0, VK_FORMAT_R8G8B8A8_UNORM, 0},
         {1, 0, VK_FORMAT_R8G8B8A8_UNORM, 4},
         {2, 0, VK_FORMAT_R32G32_SFLOAT, 20},
@@ -1349,9 +1381,21 @@ VkPipeline VulkanContext::pipeline()
         vertexShader = 4;
         attributesUsed = 0;
     }
+    uint32_t bindingsUsed = attributesUsed ? 1 : 0;
+    if (m_instanced) {
+        // Locations 3 to 6 are the world matrix's rows; the World program also reads the material colour at 7 and the
+        // alpha at 8.
+        const uint32_t rows = m_state.program == VulkanProgram::World ? 5 : 4;
+        for (uint32_t row = 0; row < rows; ++row)
+            attributes[attributesUsed++] = {3 + row, 1, VK_FORMAT_R32G32B32A32_SFLOAT, 16 * row};
+        if (m_state.program == VulkanProgram::World)
+            attributes[attributesUsed++] = {8, 1, VK_FORMAT_R32_SFLOAT, 80};
+        vertexShader = m_state.program == VulkanProgram::World ? 7 : 8;
+        bindingsUsed = 2;
+    }
     VkPipelineVertexInputStateCreateInfo vertex {VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO};
-    vertex.vertexBindingDescriptionCount = attributesUsed ? 1 : 0;
-    vertex.pVertexBindingDescriptions = &binding;
+    vertex.vertexBindingDescriptionCount = bindingsUsed;
+    vertex.pVertexBindingDescriptions = bindings;
     vertex.vertexAttributeDescriptionCount = attributesUsed;
     vertex.pVertexAttributeDescriptions = attributes;
     VkPipelineInputAssemblyStateCreateInfo assembly {VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO};

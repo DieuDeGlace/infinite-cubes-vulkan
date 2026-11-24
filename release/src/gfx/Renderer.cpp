@@ -3360,6 +3360,10 @@ void Renderer::renderEffects()
 
 void Renderer::renderTranslucentSprites(SpriteBatch &batch, int flags)
 {
+    if (!(flags & SpritePassFlagScreenPosition)) {
+        renderTranslucentRuns(batch, flags);
+        return;
+    }
     // Each list twice: first in the modes 3 and 4 with only the matrices and the depth offset set, then in the modes 6
     // and 7 with every shader value of the instance.
     if (!batch.m_translucent.empty()) {
@@ -3749,6 +3753,14 @@ void Renderer::renderSprites(SpriteBatch &batch, int flags)
     for (auto &entry : batch.m_instances) {
         cube::Sprite *sprite = entry.first;
         if (sprite->bind()) {
+            if (!(flags & SpritePassFlagScreenPosition)) {
+                m_spriteInstances.clear();
+                for (SpriteBatch::Instance &instance : entry.second)
+                    m_spriteInstances.push_back(&instance);
+                drawSpriteRuns(sprite, m_spriteInstances, flags);
+                endChunkBufferDraw();
+                continue;
+            }
             for (SpriteBatch::Instance &instance : entry.second) {
                 if (flags & SpritePassFlagZoneLights) {
                     plasma::Vector<3, float> center =
@@ -3792,6 +3804,13 @@ void Renderer::renderSprites(SpriteBatch &batch, int flags)
         for (auto &entry : batch.m_mirroredInstances) {
             cube::Sprite *sprite = entry.first;
             if (sprite->bind()) {
+                if (!(flags & SpritePassFlagScreenPosition)) {
+                    m_spriteInstances.clear();
+                    for (SpriteBatch::Instance &instance : entry.second)
+                        m_spriteInstances.push_back(&instance);
+                    drawSpriteRuns(sprite, m_spriteInstances, flags);
+                    continue;
+                }
                 for (SpriteBatch::Instance &instance : entry.second) {
                     if (flags & SpritePassFlagZoneLights) {
                         plasma::Vector<3, float> center =
@@ -3826,6 +3845,86 @@ void Renderer::renderSprites(SpriteBatch &batch, int flags)
                     setDepthOffset(instance.parameters[3]);
                     sprite->drawBound();
                 }
+            }
+        }
+    }
+}
+
+// The header describes the runs.
+void Renderer::drawSpriteRuns(cube::Sprite *sprite, const std::vector<const SpriteBatch::Instance *> &instances,
+                              int flags)
+{
+    size_t start = 0;
+    cube::Zone *runZone = nullptr;
+    for (size_t i = 0; i < instances.size(); i++) {
+        const SpriteBatch::Instance &instance = *instances[i];
+        cube::Zone *zone = (flags & SpritePassFlagZoneLights) ? litZone(sprite, instance) : nullptr;
+        if (i > start && (zone != runZone || instance.parameters != instances[start]->parameters)) {
+            drawSpriteRun(sprite, &instances[start], i - start, runZone, flags);
+            start = i;
+        }
+        runZone = zone;
+    }
+    if (start < instances.size())
+        drawSpriteRun(sprite, &instances[start], instances.size() - start, runZone, flags);
+}
+
+void Renderer::drawSpriteRun(cube::Sprite *sprite, const SpriteBatch::Instance *const *instances, size_t count,
+                             cube::Zone *zone, int flags)
+{
+    if (flags & SpritePassFlagZoneLights) {
+        if (zone)
+            setPointLights(zone->m_chunk.lightPositions, zone->m_chunk.lightColors);
+        else
+            clearPointLights();
+    }
+    const SpriteBatch::Instance &first = *instances[0];
+    setShininess(first.parameters[1]);
+    setGlow(first.parameters[0]);
+    setWhite(first.parameters[2]);
+    setDepthOffset(first.parameters[3]);
+    if (count > 1 && drawSpriteInstances(sprite, instances, count))
+        return;
+    for (size_t i = 0; i < count; i++) {
+        setWorldMatrix(instances[i]->matrix);
+        setMaterialColor(instances[i]->color);
+        setAlpha(instances[i]->alpha);
+        sprite->drawBound();
+    }
+}
+
+cube::Zone *Renderer::litZone(cube::Sprite *sprite, const SpriteBatch::Instance &instance)
+{
+    plasma::Vector<3, float> center =
+        instance.matrix * plasma::Vector<3, float>((float)sprite->m_size[0] * 0.5f, (float)sprite->m_size[1] * 0.5f,
+                                                   (float)sprite->m_size[2] * 0.5f);
+    int zoneX = cube::floorDivide((cube::Fixed(center[0]) - m_drawOriginX).toBlock(), cube::BlocksPerZone);
+    int zoneY = cube::floorDivide((cube::Fixed(center[1]) - m_drawOriginY).toBlock(), cube::BlocksPerZone);
+    cube::Zone *zone = m_world->zone(zoneX, zoneY);
+    return zone && zone->m_chunk.lightCount > 0 ? zone : nullptr;
+}
+
+// The header describes the passes.
+void Renderer::renderTranslucentRuns(SpriteBatch &batch, int flags)
+{
+    std::vector<SpriteBatch::TranslucentInstance> *lists[] = {&batch.m_translucent, &batch.m_mirroredTranslucent};
+    for (int side = 0; side < 2; side++) {
+        for (auto &entry : m_translucentRuns[side])
+            entry.second.clear();
+        for (SpriteBatch::TranslucentInstance &translucent : *lists[side])
+            m_translucentRuns[side][translucent.sprite].push_back(&translucent.instance);
+    }
+    // Modes 3 and 4 lay down the depth, then modes 6 and 7 the colour.
+    const int modes[2][2] = {{RendererMode_DepthFront, RendererMode_DepthBack},
+                             {RendererMode_AlphaFront, RendererMode_AlphaBack}};
+    for (int pass = 0; pass < 2; pass++) {
+        for (int side = 0; side < 2; side++) {
+            if (lists[side]->empty())
+                continue;
+            activateMode(modes[pass][side]);
+            for (auto &entry : m_translucentRuns[side]) {
+                if (!entry.second.empty() && entry.first->bind())
+                    drawSpriteRuns(entry.first, entry.second, pass == 0 ? 0 : flags);
             }
         }
     }

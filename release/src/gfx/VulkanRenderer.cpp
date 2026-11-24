@@ -278,14 +278,16 @@ void VulkanRenderer::drawSunMap(const plasma::Vector<3, float> &direction, const
             }
         }
     };
+    // Each model's instances cast their shadows in one instanced draw.
+    std::vector<const SpriteBatch::Instance *> instances;
     const auto drawModels = [&](const auto &groups) {
         for (const auto &group : groups) {
             auto *sprite = group.first;
             if (sprite->bind()) {
-                for (const auto &instance : group.second) {
-                    setWorldMatrix(instance.matrix);
-                    sprite->drawBound();
-                }
+                instances.clear();
+                for (const auto &instance : group.second)
+                    instances.push_back(&instance);
+                drawSpriteInstances(sprite, instances.data(), instances.size());
             }
         }
     };
@@ -671,6 +673,20 @@ void VulkanRenderer::setPointLights(const std::array<plasma::Vector<4, float>, 1
 {
     std::copy_n(positions.begin(), m_uniforms.lightPositions.size(), m_uniforms.lightPositions.begin());
     std::copy_n(colors.begin(), m_uniforms.lightColors.size(), m_uniforms.lightColors.begin());
+}
+
+bool VulkanRenderer::drawSpriteInstances(cube::Sprite *sprite, const SpriteBatch::Instance *const *instances,
+                                         size_t count)
+{
+    m_spriteInstances.resize(count);
+    for (size_t i = 0; i < count; ++i) {
+        for (int element = 0; element < 16; ++element)
+            m_spriteInstances[i].world[element] = instances[i]->matrix[element];
+        m_spriteInstances[i].material = instances[i]->color;
+        m_spriteInstances[i].alpha = instances[i]->alpha;
+    }
+    return m_context.drawInstanced(uint32_t(sprite->m_triangleCount) * 3, m_spriteInstances.data(),
+                                   uint32_t(m_spriteInstances.size()));
 }
 
 void VulkanRenderer::setProjectionMatrix(const plasma::Matrix<float> &matrix)

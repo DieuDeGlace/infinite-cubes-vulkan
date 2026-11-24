@@ -134,6 +134,12 @@ public:
                                 const std::array<plasma::Vector<4, float>, 16> &colors)
     {}
     virtual void endChunkBufferDraw() {}
+    // Draws the bound sprite once per instance in one call, each with its own matrix, colour and alpha and the other
+    // shader parameters as set; false when the back end cannot (the caller then draws them one by one).
+    virtual bool drawSpriteInstances(cube::Sprite *sprite, const SpriteBatch::Instance *const *instances, size_t count)
+    {
+        return false;
+    }
     virtual void beginScene() {}
     virtual void endScene() {}
 
@@ -182,6 +188,19 @@ public:
     // SpritePassFlagScreenPosition the projection is shifted to the instance's window position (drawItem's and
     // drawCreature's batches).
     void renderSprites(SpriteBatch &batch, int flags);
+    // The world passes of renderSprites and renderTranslucentSprites: the bound sprite's instances in runs that share
+    // their point lights and every shader parameter but the matrix, colour and alpha, each run in one instanced draw (a
+    // field of grass is thousands of single draws otherwise). Unlit zones share one run.
+    void drawSpriteRuns(cube::Sprite *sprite, const std::vector<const SpriteBatch::Instance *> &instances, int flags);
+    // One run of drawSpriteRuns, lit by zone's point lights (none without a zone); a lone instance, or a back end
+    // without instancing, draws one by one.
+    void drawSpriteRun(cube::Sprite *sprite, const SpriteBatch::Instance *const *instances, size_t count,
+                       cube::Zone *zone, int flags);
+    // The zone whose point lights reach the instance's centre, or null when that zone has none.
+    cube::Zone *litZone(cube::Sprite *sprite, const SpriteBatch::Instance &instance);
+    // renderTranslucentSprites' world passes: the instances by sprite, the depth of all of them first, then their
+    // colour. Only the nearest translucent surface passes the depth test, so the grouping does not change the picture.
+    void renderTranslucentRuns(SpriteBatch &batch, int flags);
     // Updates view distance slowly upwards and immediately downwards. Holds it at 256 in a shaded dungeon or with buff
     // 19, and at least 64 on a long flight. Stores dungeon shade in m_dungeonShade and moves water opacity towards 1.
     void updateViewDistance(float frameTime);
@@ -249,6 +268,10 @@ public:
 protected:
     cube::World *m_world;
     cube::WorldMap *m_worldMap; // constructor argument (WinMain passes the world map)
+    // One sprite's instances for drawSpriteRuns, and renderTranslucentRuns' instances by sprite (ordinary and
+    // mirrored); kept to reuse their storage.
+    std::vector<const SpriteBatch::Instance *> m_spriteInstances;
+    std::map<cube::Sprite *, std::vector<const SpriteBatch::Instance *>> m_translucentRuns[2];
     // Effect records passed to their respective drawing functions; some fields have unknown meanings.
     struct Impact { // Effect record storage.
         Impact(const plasma::Vector<3, cube::Fixed> &position, const plasma::Vector<3, float> &vector,

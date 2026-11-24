@@ -91,4 +91,6 @@ TAA resolves the world before SMAA. The map, HUD, and menus draw after both pass
 
 The sun shadow range, distance fade and warm direct light follow the Omega-inspired Steam preset, and the moon's light and shadows follow its MoonLight rules. [MoonandShadow](https://github.com/DieuDeGlace/MoonandShadow)
 
+Grass, flowers and other plants of one model draw together: one instanced draw per model and zone in the world pass, and per model in the sun shadow pass. A savannah no longer costs thousands of separate draws a frame.
+
 The bounced light gathers from the depth and material colors of sunlit terrain in world space. The sampling pattern stays fixed across frames. [Photon-LIGHT](https://github.com/Bonbox562/Photon-LIGHT) · [Reflective Shadow Maps](https://users.soe.ucsc.edu/~pang/160/s13/proposal/mijallen/proposal/media/p203-dachsbacher.pdf)
