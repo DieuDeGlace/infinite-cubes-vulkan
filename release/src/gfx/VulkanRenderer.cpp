@@ -309,7 +309,7 @@ void VulkanRenderer::drawSunMap(const plasma::Vector<3, float> &direction, const
     const auto drawModels = [&](const auto &groups) {
         for (const auto &group : groups) {
             auto *sprite = group.first;
-            cube::Sprite *caster = sprite->m_lowDetail[0] ? sprite->m_lowDetail[0] : sprite;
+            cube::Sprite *caster = sprite->m_lowDetail ? sprite->m_lowDetail : sprite;
             instances.clear();
             joined.clear();
             for (const auto &instance : group.second) {

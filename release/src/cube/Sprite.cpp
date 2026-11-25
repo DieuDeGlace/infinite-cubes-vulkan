@@ -138,59 +138,57 @@ Sprite::~Sprite()
 
 void Sprite::clearLowDetail()
 {
-    for (Sprite *&copy : m_lowDetail) {
-        delete copy;
-        copy = nullptr;
-    }
+    delete m_lowDetail;
+    m_lowDetail = nullptr;
 }
 
 // The header describes the joined voxels.
 Sprite *Sprite::lowDetail(int level)
 {
-    if (level < 1 || level > 2 || !m_voxels)
+    if (level < 1 || !m_voxels)
         return this;
-    Sprite *&copy = m_lowDetail[level - 1];
-    if (copy)
-        return copy;
-    const int factor = 1 << level;
-    const plasma::Vector<3, int> size((m_size[0] + factor - 1) / factor, (m_size[1] + factor - 1) / factor,
-                                      (m_size[2] + factor - 1) / factor);
+    if (m_lowDetail)
+        return m_lowDetail->lowDetail(level - 1);
+    const plasma::Vector<3, int> size((m_size[0] + 1) / 2, (m_size[1] + 1) / 2, (m_size[2] + 1) / 2);
     std::vector<plasma::Vector<3, unsigned char>> voxels(size[0] * size[1] * size[2], s_emptyVoxel);
-    for (int x = 0; x < size[0]; x++) {
-        for (int y = 0; y < size[1]; y++) {
-            for (int z = 0; z < size[2]; z++) {
-                int sum[3] = {0, 0, 0};
-                int filled = 0;
-                for (int dx = 0; dx < factor; dx++) {
-                    for (int dy = 0; dy < factor; dy++) {
-                        for (int dz = 0; dz < factor; dz++) {
-                            plasma::Vector<3, unsigned char> *source =
-                                &voxel(x * factor + dx, y * factor + dy, z * factor + dz);
-                            if (isEmpty(source, m_showMarkers))
-                                continue;
-                            for (int i = 0; i < 3; i++)
-                                sum[i] += (*source)[i];
-                            filled++;
+    // At least two of the eight; a model so sparse that nothing would be left takes any one instead.
+    bool kept = false;
+    for (int least = 2; least >= 1 && !kept; least--) {
+        for (int x = 0; x < size[0]; x++) {
+            for (int y = 0; y < size[1]; y++) {
+                for (int z = 0; z < size[2]; z++) {
+                    plasma::Vector<3, unsigned char> colors[8];
+                    int filled = 0;
+                    for (int corner = 0; corner < 8; corner++) {
+                        plasma::Vector<3, unsigned char> *source =
+                            &voxel(x * 2 + (corner & 1), y * 2 + ((corner >> 1) & 1), z * 2 + (corner >> 2));
+                        if (!isEmpty(source, m_showMarkers))
+                            colors[filled++] = *source;
+                    }
+                    if (filled < least)
+                        continue;
+                    // The most common of their colours (the first of equals), so petals stay yellow beside a brown
+                    // middle rather than meeting in a blend of the two.
+                    int best = 0;
+                    int bestCount = 0;
+                    for (int i = 0; i < filled; i++) {
+                        const int count = (int)std::count(colors, colors + filled, colors[i]);
+                        if (count > bestCount) {
+                            best = i;
+                            bestCount = count;
                         }
                     }
+                    voxels[(z * size[1] + y) * size[0] + x] = colors[best];
+                    kept = true;
                 }
-                if (!filled)
-                    continue;
-                plasma::Vector<3, unsigned char> color((unsigned char)(sum[0] / filled),
-                                                       (unsigned char)(sum[1] / filled),
-                                                       (unsigned char)(sum[2] / filled));
-                // An average that lands on the empty colour would leave a hole.
-                if (color == s_emptyVoxel)
-                    color[0] = 1;
-                voxels[(z * size[1] + y) * size[0] + x] = color;
             }
         }
     }
-    copy = new Sprite(*m_graphics, m_fullIntensity);
-    copy->m_tint = m_tint;
-    copy->m_shadingRadius = (std::max)(1, m_shadingRadius / factor);
-    copy->setVoxels(size[0], size[1], size[2], voxels.data(), true, false);
-    return copy;
+    m_lowDetail = new Sprite(*m_graphics, m_fullIntensity);
+    m_lowDetail->m_tint = m_tint;
+    m_lowDetail->m_shadingRadius = (std::max)(1, m_shadingRadius / 2);
+    m_lowDetail->setVoxels(size[0], size[1], size[2], voxels.data(), true, false);
+    return m_lowDetail->lowDetail(level - 1);
 }
 
 bool Sprite::bind()

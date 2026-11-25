@@ -40,10 +40,10 @@ static const float ZoneCullMarginBlocks = 64.0f;
 static const int GroundItemLightElevation = 3;
 static const float GroundItemLightRadius = 16.0f;
 static const float PlantLightVisibilityRadius = 16.0f;
-// Plants farther than these (in blocks) draw cube::Sprite::lowDetail's joined voxels, level 1 and then level 2: there
-// a voxel of a grass model covers about a pixel, and the joined ones keep the outline with a quarter and a sixteenth
-// of the faces.
-static const float PlantDetailDistances[2] = {40.0f, 80.0f};
+// Plants farther than these many times their voxel's width (Plant::scale, in blocks) draw cube::Sprite::lowDetail's
+// joined voxels, level 1 and then level 2: grass (0.075) at 40 and 80 blocks, where its voxels cover about a pixel,
+// and a crop with voxels twice as wide at twice the distance, so no plant's joined voxels show as blocks.
+static const float PlantDetailVoxelDistances[2] = {530.0f, 1070.0f};
 static const float LampDaylightCutoff = 0.4f;
 static const float ComboLightRadius = 10.0f;
 static const float RightWeaponComboLightGain = 0.3f;
@@ -1035,9 +1035,12 @@ void Renderer::collectSprites(const plasma::Vector<3, int> &lookedAt, int flags)
                     // Far plants draw the model with joined voxels; the lights keep every voxel.
                     const float squaredDistance = squaredBlocks(plant.position - m_cameraPosition);
                     int detail = 0;
-                    while (!(plant.flags & cube::PlantFlagEmissive) && detail < 2 &&
-                           squaredDistance > PlantDetailDistances[detail] * PlantDetailDistances[detail])
+                    while (!(plant.flags & cube::PlantFlagEmissive) && detail < 2) {
+                        const float distance = PlantDetailVoxelDistances[detail] * plant.scale;
+                        if (squaredDistance <= distance * distance)
+                            break;
                         detail++;
+                    }
                     cube::Sprite *drawn = sprite->lowDetail(detail);
 
                     plasma::Matrix<float> model;
