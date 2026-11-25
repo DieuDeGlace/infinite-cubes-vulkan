@@ -44,13 +44,12 @@ struct Footprint {
     int x, y, radius;
 };
 
-std::vector<Footprint> fixedFeatures(World &world, int zoneX, int zoneY)
+// The fixed footprints of a zone's own cells.
+std::vector<Footprint> zoneFeatures(World &world, int zoneX, int zoneY)
 {
-    constexpr int Margin = AnchorReach + RockRadius + BlocksPerCell;
-    constexpr int Padding = Margin / BlocksPerCell;
     std::vector<Footprint> features;
-    for (int dx = -Padding; dx < CellsPerZone + Padding; ++dx) {
-        for (int dy = -Padding; dy < CellsPerZone + Padding; ++dy) {
+    for (int dx = 0; dx < CellsPerZone; ++dx) {
+        for (int dy = 0; dy < CellsPerZone; ++dy) {
             const int cx = zoneX * CellsPerZone + dx;
             const int cy = zoneY * CellsPerZone + dy;
             const int type = world.zoneBuildingType(cx, cy);
@@ -66,6 +65,47 @@ std::vector<Footprint> fixedFeatures(World &world, int zoneX, int zoneY)
                 radius = RockRadius;
             features.push_back(
                 {cx * BlocksPerCell + BlocksPerCell / 2, cy * BlocksPerCell + BlocksPerCell / 2, radius});
+        }
+    }
+    return features;
+}
+
+// zoneFeatures, kept per thread. The map's columns lie a zone or more apart, so each of them needs a new
+// neighbourhood (fixedFeatures) whose zones its neighbours have mostly read already.
+const std::vector<Footprint> &cachedZoneFeatures(World &world, int zoneX, int zoneY)
+{
+    struct Entry {
+        const World *world = nullptr;
+        int seed = 0, zoneX = 0, zoneY = 0;
+        bool largerBiomes = false;
+        std::vector<Footprint> features;
+    };
+    static thread_local std::array<Entry, 1024> cache;
+    auto &entry = cache[(unsigned(zoneX) * 31 + unsigned(zoneY)) % cache.size()];
+    if (entry.world != &world || entry.seed != world.m_seed || entry.zoneX != zoneX || entry.zoneY != zoneY ||
+        entry.largerBiomes != world.m_largerBiomes)
+        entry = {&world, world.m_seed, zoneX, zoneY, world.m_largerBiomes, zoneFeatures(world, zoneX, zoneY)};
+    return entry.features;
+}
+
+// The fixed footprints of the cells within Padding cells of a zone: any of them can reach one of its columns.
+std::vector<Footprint> fixedFeatures(World &world, int zoneX, int zoneY)
+{
+    constexpr int Margin = AnchorReach + RockRadius + BlocksPerCell;
+    constexpr int Padding = Margin / BlocksPerCell;
+    const int firstX = zoneX * CellsPerZone - Padding;
+    const int endX = (zoneX + 1) * CellsPerZone + Padding;
+    const int firstY = zoneY * CellsPerZone - Padding;
+    const int endY = (zoneY + 1) * CellsPerZone + Padding;
+    std::vector<Footprint> features;
+    for (int x = floorDivide(firstX, CellsPerZone); x <= floorDivide(endX - 1, CellsPerZone); ++x) {
+        for (int y = floorDivide(firstY, CellsPerZone); y <= floorDivide(endY - 1, CellsPerZone); ++y) {
+            for (const Footprint &feature : cachedZoneFeatures(world, x, y)) {
+                const int cellX = floorDivide(feature.x, BlocksPerCell);
+                const int cellY = floorDivide(feature.y, BlocksPerCell);
+                if (cellX >= firstX && cellX < endX && cellY >= firstY && cellY < endY)
+                    features.push_back(feature);
+            }
         }
     }
     return features;
