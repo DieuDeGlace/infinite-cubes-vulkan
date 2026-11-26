@@ -3915,19 +3915,19 @@ bool World::isHallNear(int type, bool requireActive)
 bool isHallNearEnd(int x, int y, int direction, int startX, int startY, int regionX, int regionY)
 {
     if (direction == DungeonDirectionWest) {
-        if (x == floorDivide(regionX << 10, BlocksPerDungeonRoom) + 1) {
+        if (x == floorDivide(regionX * BlocksPerPlace, BlocksPerDungeonRoom) + 1) {
             return y == dungeonWayY(x - 1, startX, startY, regionX, regionY);
         }
     } else if (direction == DungeonDirectionSouth) {
-        if (y == floorDivide(regionY << 10, BlocksPerDungeonRoom) + 1) {
+        if (y == floorDivide(regionY * BlocksPerPlace, BlocksPerDungeonRoom) + 1) {
             return x == dungeonWayX(y - 1, startX, startY, regionX, regionY);
         }
     } else if (direction == DungeonDirectionEast) {
-        if (x == floorDivide((regionX << 10) + 2047, BlocksPerDungeonRoom) - 1) {
+        if (x == floorDivide((regionX + 2) * BlocksPerPlace - 1, BlocksPerDungeonRoom) - 1) {
             return y == dungeonWayY(x + 1, startX, startY, regionX, regionY);
         }
     } else if (direction == DungeonDirectionNorth) {
-        if (y == floorDivide((regionY << 10) + 2047, BlocksPerDungeonRoom) - 1) {
+        if (y == floorDivide((regionY + 2) * BlocksPerPlace - 1, BlocksPerDungeonRoom) - 1) {
             return x == dungeonWayX(y + 1, startX, startY, regionX, regionY);
         }
     }
@@ -4933,12 +4933,12 @@ plasma::Vector<3, Fixed> World::nearestShrine(const plasma::Vector<3, Fixed> &po
         }
     }
     if (bestDistance < 0.0) {
-        // The sites (siteInZone) of the places within a land's span.
+        // The sites (siteInZone) of the site regions within a land's span.
         const Fixed span(blocksPerLand());
-        int firstX = floorDivide(tileCoordinate(position[0] - span), BlocksPerPlace / BlocksPerCell);
-        int lastX = floorDivide(tileCoordinate(position[0] + span), BlocksPerPlace / BlocksPerCell);
-        int firstY = floorDivide(tileCoordinate(position[1] - span), BlocksPerPlace / BlocksPerCell);
-        int lastY = floorDivide(tileCoordinate(position[1] + span), BlocksPerPlace / BlocksPerCell);
+        int firstX = floorDivide(tileCoordinate(position[0] - span), CellsPerSiteRegion);
+        int lastX = floorDivide(tileCoordinate(position[0] + span), CellsPerSiteRegion);
+        int firstY = floorDivide(tileCoordinate(position[1] - span), CellsPerSiteRegion);
+        int lastY = floorDivide(tileCoordinate(position[1] + span), CellsPerSiteRegion);
         for (int regionX = firstX; regionX <= lastX; ++regionX) {
             for (int regionY = firstY; regionY <= lastY; ++regionY) {
                 const plasma::Vector<2, int> cell = siteInZone(regionX, regionY);
@@ -5514,10 +5514,9 @@ void World::saveState(const WorldState &state)
 
 plasma::Vector<2, int> World::siteInZone(int x, int y)
 {
-    // A cell of the place's 16-block cells, one in from its edges.
-    const int cells = BlocksPerPlace / BlocksPerCell;
-    return plasma::Vector<2, int>(x * cells + 1 + random(x + 148289, y) % (cells - 2),
-                                  random(x + 1464073, y) % (cells - 2) + y * cells + 1);
+    // A cell of the site region, one in from its edges.
+    return plasma::Vector<2, int>(x * CellsPerSiteRegion + 1 + random(x + 148289, y) % (CellsPerSiteRegion - 2),
+                                  random(x + 1464073, y) % (CellsPerSiteRegion - 2) + y * CellsPerSiteRegion + 1);
 }
 
 float World::BiomeSample::snow()
@@ -6304,8 +6303,8 @@ BuildingType World::streetBuildingType(int zoneX, int zoneY, const plasma::Vecto
         }
     }
     // The region's site: one special building in every 64 x 64 squares, with free squares around it.
-    int regionX = floorDivide(zoneX, ZonesPerRegion);
-    int regionY = floorDivide(zoneY, ZonesPerRegion);
+    int regionX = floorDivide(zoneX, CellsPerSiteRegion);
+    int regionY = floorDivide(zoneY, CellsPerSiteRegion);
     plasma::Vector<2, int> site = siteInZone(regionX, regionY);
     int reach = 1;
     int building;

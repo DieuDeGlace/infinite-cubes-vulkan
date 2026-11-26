@@ -9,6 +9,9 @@ namespace cube {
 const int CellsPerPlot = 3;                             // a hamlet plot (a house and its yard) is 3 x 3 cells
 const int BlocksPerPlot = CellsPerPlot * BlocksPerCell; // Hamlet plot width in terrain blocks.
 const int CellsPerDungeonRoom = 8;                      // a dungeon room is 8 x 8 cells
+// A site region (World::siteInZone) is 64 x 64 cells, 1,024 blocks, in either world size: its one special building
+// (a shrine of life, a cave, a lore crypt...) keeps its 1.0x spacing.
+const int CellsPerSiteRegion = 64;
 const int BlocksPerDungeonRoom = CellsPerDungeonRoom * BlocksPerCell; // Dungeon room width in terrain blocks.
 
 // A block or cell coordinate that marks no position: no selection on the map, no place or village found, no

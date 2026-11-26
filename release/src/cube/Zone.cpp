@@ -7179,8 +7179,8 @@ void Zone::generate()
                 // rest of the zone generates as before.
                 if (rand() % 12800 < 100 * m_world->m_spawnDensity / 100 &&
                     m_world->streetAmount(x, y, info.type, influence) < 0.25f) {
-                    plasma::Vector<2, int> site = m_world->siteInZone(partIndex(cellX, BlocksPerPlace / BlocksPerCell),
-                                                                      partIndex(cellY, BlocksPerPlace / BlocksPerCell));
+                    plasma::Vector<2, int> site =
+                        m_world->siteInZone(partIndex(cellX, CellsPerSiteRegion), partIndex(cellY, CellsPerSiteRegion));
                     if (squaredLength(plasma::Vector<2, int>(site[0] - cellX, site[1] - cellY)) > 16) {
                         addSpawnGroup(cellX, cellY, false);
                     }

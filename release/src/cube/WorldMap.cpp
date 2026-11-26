@@ -1869,12 +1869,13 @@ bool WorldMap::update(const plasma::Vector<3, Fixed> &position, int level)
                     region->flightPoints.push_back(flightPoint);
                 }
             }
-            // The type 53 building of each 1024-block cell (marker 12).
+            // The type 53 building of each site region (marker 12).
             if (scale <= 512) {
-                for (int placeX = floorDivide(mapRegionX * regionSize, BlocksPerPlace);
-                     placeX <= floorDivide((mapRegionX + 1) * regionSize, BlocksPerPlace); placeX++) {
-                    for (int placeY = floorDivide(mapRegionY * regionSize, BlocksPerPlace);
-                         placeY <= floorDivide((mapRegionY + 1) * regionSize, BlocksPerPlace); placeY++) {
+                constexpr int SiteRegionBlocks = CellsPerSiteRegion * BlocksPerCell;
+                for (int placeX = floorDivide(mapRegionX * regionSize, SiteRegionBlocks);
+                     placeX <= floorDivide((mapRegionX + 1) * regionSize, SiteRegionBlocks); placeX++) {
+                    for (int placeY = floorDivide(mapRegionY * regionSize, SiteRegionBlocks);
+                         placeY <= floorDivide((mapRegionY + 1) * regionSize, SiteRegionBlocks); placeY++) {
                         plasma::Vector<2, int> site = m_world->siteInZone(placeX, placeY);
                         plasma::Vector<2, int> block = site * 16;
                         int blockX = block[0] + 8;

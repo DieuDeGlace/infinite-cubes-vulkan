@@ -424,7 +424,7 @@ public:
     plasma::Vector<2, int> houseCorner(int x, int y);
     int housePart(int x, int y);
     int notchWidth(int x, int y);                    // 1 for half the positions, else 3..6
-    plasma::Vector<2, int> siteInZone(int x, int y); // a block 1..62 inside zone (x, y)
+    plasma::Vector<2, int> siteInZone(int x, int y); // a cell 1..62 into site region (x, y) (CellsPerSiteRegion)
     // Ignores the block coordinates passed by callers.
     plasma::Vector<3, float> snowColor(int x, int y);
     int streetSides(int x, int y); // JoinedSideMinusX, JoinedSidePlusX, JoinedSideMinusY, JoinedSidePlusY for isJoined
