@@ -324,11 +324,10 @@ enum ManaAbilityMembership : unsigned long long {
 };
 
 World::World(SpriteManager *spriteManager, std::shared_ptr<AlphaTerrain> alphaTerrain, bool largerBiomes,
-             bool pyroProgression, bool aquaticEnemies, bool placesFollowBiomes)
+             bool pyroProgression, bool aquaticEnemies)
     : m_spriteManager(spriteManager),
       m_alphaTerrain(std::move(alphaTerrain)),
       m_largerBiomes(largerBiomes),
-      m_placesFollowBiomes(largerBiomes && placesFollowBiomes),
       m_pyroProgression(pyroProgression),
       m_aquaticEnemies(aquaticEnemies),
       m_aiManager(this),
@@ -337,8 +336,8 @@ World::World(SpriteManager *spriteManager, std::shared_ptr<AlphaTerrain> alphaTe
       m_clock(0),
       m_localCreature(nullptr)
 {
-    // Places follow the biomes by spreading over cells as much larger.
-    BlocksPerPlace = m_placesFollowBiomes ? NativeBlocksPerPlace * 3 / 2 : NativeBlocksPerPlace;
+    // Places and roads stretch with the biomes: their cells grow as much.
+    BlocksPerPlace = m_largerBiomes ? NativeBlocksPerPlace * 3 / 2 : NativeBlocksPerPlace;
     installNoise();
     m_petRaces.push_back(RaceBunny);
     m_petRaces.push_back(RaceMole);
@@ -8004,10 +8003,9 @@ void World::init(int seed, const std::string &name)
 
 const char *World::saveDirectory() const
 {
-    if (m_placesFollowBiomes)
-        return m_alphaTerrain ? "Save/AlphaTerrain-v1-Biomes150-Places" : "Save/Biomes150-Places-v1";
+    // 1.5x worlds made before the places stretched with the biomes stay in Biomes150-v1 and AlphaTerrain-v1-Biomes150.
     if (m_largerBiomes)
-        return m_alphaTerrain ? "Save/AlphaTerrain-v1-Biomes150" : "Save/Biomes150-v1";
+        return m_alphaTerrain ? "Save/AlphaTerrain-v1-Biomes150-Places" : "Save/Biomes150-Places-v1";
     return m_alphaTerrain ? AlphaTerrain::SaveDirectory : "Save";
 }
 
@@ -8015,8 +8013,9 @@ int World::networkProtocolVersion() const
 {
     // Both peers need the same Alpha terrain profile.
     const int protocol = m_alphaTerrain ? AlphaTerrain::ProtocolVersion : 100100;
-    return protocol + (m_alphaTerrain ? 1 : 0) + (m_largerBiomes ? 2 : 0) + (m_pyroProgression ? 4 : 0) +
-           (m_aquaticEnemies ? 8 : 0) + (m_placesFollowBiomes ? 16 : 0);
+    // 1.5x adds 18: 2 was the 1.5x layout whose places kept their 1.0x positions.
+    return protocol + (m_alphaTerrain ? 1 : 0) + (m_largerBiomes ? 18 : 0) + (m_pyroProgression ? 4 : 0) +
+           (m_aquaticEnemies ? 8 : 0);
 }
 
 // The wind (a hand-tuned profile): noises at 0.02 sampled at raw fixed-point phases, of amplitude 8 in x and y and

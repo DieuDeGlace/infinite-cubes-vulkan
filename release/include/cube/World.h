@@ -211,11 +211,10 @@ public:
         std::map<long long, State> m_states; // Creature ID key.
     };
 
-    // placesFollowBiomes (with largerBiomes): the places and the roads between them stretch with the biomes
-    // (BlocksPerPlace).
+    // largerBiomes: the biomes, the places and the roads between them are 1.5x as large (blocksPerLand,
+    // BlocksPerPlace).
     explicit World(SpriteManager *spriteManager, std::shared_ptr<AlphaTerrain> alphaTerrain = {},
-                   bool largerBiomes = false, bool pyroProgression = false, bool aquaticEnemies = false,
-                   bool placesFollowBiomes = false);
+                   bool largerBiomes = false, bool pyroProgression = false, bool aquaticEnemies = false);
     virtual ~World();
     const char *saveDirectory() const;
     int networkProtocolVersion() const;
@@ -419,6 +418,8 @@ public:
     bool isCoveredType(int type);
     plasma::Vector<2, int> landCenter(int x, int y) const;
     int blocksPerLand() const { return m_largerBiomes ? BlocksPerLand * 3 / 2 : BlocksPerLand; }
+    // How much larger than 1.0x the world is laid out: 1 or 1.5.
+    double layoutScale() const { return double(blocksPerLand()) / BlocksPerLand; }
     int missionTargetType(int type, int x, int y, bool large);
     plasma::Vector<2, int> houseCorner(int x, int y);
     int housePart(int x, int y);
@@ -863,7 +864,6 @@ public:
     SpriteManager *m_spriteManager; // the constructor's argument
     const std::shared_ptr<AlphaTerrain> m_alphaTerrain;
     const bool m_largerBiomes;
-    const bool m_placesFollowBiomes;
     const bool m_pyroProgression;
     const bool m_aquaticEnemies;
     bool m_travelDungeons = false; // set before any zone is generated

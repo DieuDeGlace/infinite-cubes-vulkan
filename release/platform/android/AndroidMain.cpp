@@ -350,8 +350,7 @@ struct Session {
         if (options.alphaTerrain)
             alphaTerrain = std::make_shared<cube::AlphaTerrain>();
         world = std::make_unique<cube::World>(spriteManager.get(), alphaTerrain, options.largerBiomes != 0,
-                                              options.pyroProgression != 0, options.aquaticEnemies != 0,
-                                              options.largerBiomes == cube::Options::BiomesWithPlaces);
+                                              options.pyroProgression != 0, options.aquaticEnemies != 0);
         world->m_travelDungeons = options.travelDungeons != 0;
         cube::Item::s_travelGearAnywhere = world->m_travelDungeons;
         world->m_spawnDensity = std::clamp(options.spawnDensity, 50, 400);

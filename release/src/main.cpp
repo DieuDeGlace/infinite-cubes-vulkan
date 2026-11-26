@@ -411,9 +411,9 @@ static int runGame(HINSTANCE programInstance, int showCommand)
                 std::shared_ptr<cube::AlphaTerrain> alphaTerrain;
                 if (s_options.alphaTerrain)
                     alphaTerrain = std::make_shared<cube::AlphaTerrain>();
-                auto world = std::make_unique<cube::World>(
-                    spriteManager.get(), alphaTerrain, s_options.largerBiomes != 0, s_options.pyroProgression != 0,
-                    s_options.aquaticEnemies != 0, s_options.largerBiomes == cube::Options::BiomesWithPlaces);
+                auto world =
+                    std::make_unique<cube::World>(spriteManager.get(), alphaTerrain, s_options.largerBiomes != 0,
+                                                  s_options.pyroProgression != 0, s_options.aquaticEnemies != 0);
                 world->m_travelDungeons = s_options.travelDungeons != 0;
                 cube::Item::s_travelGearAnywhere = world->m_travelDungeons;
                 world->m_spawnDensity = std::clamp(s_options.spawnDensity, 50, 400);

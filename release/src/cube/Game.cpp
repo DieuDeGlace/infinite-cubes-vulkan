@@ -214,7 +214,7 @@ Game::Game(World *world, WorldMap *worldMap, gfx::Renderer *renderer, plasma::En
       m_audio(audio),
       m_interface(this),
       m_host(m_world->m_spriteManager, m_world->m_alphaTerrain, m_world->m_largerBiomes, m_world->m_pyroProgression,
-             m_world->m_aquaticEnemies, m_world->m_placesFollowBiomes),
+             m_world->m_aquaticEnemies),
       m_client(this),
       m_currentWorld(0),
       m_gamepadActive(false),
@@ -729,8 +729,7 @@ void Game::applyOptions(const Options &options)
     m_world->leaveZoneMeshes();
     // The world is created with its terrain and biome size (main.cpp, AndroidMain.cpp).
     const bool profileChanged = (m_options.alphaTerrain != 0) != (m_world->m_alphaTerrain != nullptr) ||
-                                (m_options.largerBiomes != 0) != m_world->m_largerBiomes ||
-                                (m_options.largerBiomes == Options::BiomesWithPlaces) != m_world->m_placesFollowBiomes;
+                                (m_options.largerBiomes != 0) != m_world->m_largerBiomes;
     if (profileChanged) {
         // Only a character in play is saved: in the start menu and the character screens the local creature is a
         // preview without the saved character's player data (its hair gradient among them).
@@ -2415,6 +2414,12 @@ void Game::loadCharacter(int slot, Creature *creature)
     if (m_charactersDatabase.read(key.str(), data)) {
         decompress(data);
         Serializer(&data).loadCreature(creature);
+        // Saved characters stand at 1.0x coordinates, shared by both world sizes; a 1.5x world spreads them as far
+        // as its places, so a character stays in its town and its biome.
+        const double scale = m_world->layoutScale();
+        auto &position = creature->m_entityData.position;
+        position[0] = Fixed(double(position[0]) * scale);
+        position[1] = Fixed(double(position[1]) * scale);
         Item item;
         item.category = ItemCategoryConsumable;
         item.id = ConsumableSnowBerryMash;
@@ -3079,6 +3084,11 @@ void Game::saveCharacter()
         keepEncounters();
         character = copyCharacter(*m_world->getLocalCreature());
     }
+    // Back to 1.0x coordinates (loadCharacter).
+    const double scale = m_world->layoutScale();
+    auto &position = character->m_entityData.position;
+    position[0] = Fixed(double(position[0]) / scale);
+    position[1] = Fixed(double(position[1]) / scale);
     BytesIO data;
     Serializer(&data).saveCreature(character.get());
     compressBytes(data);

@@ -34,9 +34,8 @@ struct ZoneCandidate {
 };
 
 Host::Host(SpriteManager *spriteManager, std::shared_ptr<AlphaTerrain> alphaTerrain, bool largerBiomes,
-           bool pyroProgression, bool aquaticEnemies, bool placesFollowBiomes)
-    : m_world(spriteManager, std::move(alphaTerrain), largerBiomes, pyroProgression, aquaticEnemies,
-              placesFollowBiomes),
+           bool pyroProgression, bool aquaticEnemies)
+    : m_world(spriteManager, std::move(alphaTerrain), largerBiomes, pyroProgression, aquaticEnemies),
       m_running(true),
       m_localClientConnection(nullptr)
 {

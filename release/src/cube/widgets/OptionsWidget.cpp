@@ -371,9 +371,7 @@ void OptionsWidget::draw()
         stream << "color coded";
     drawSetting(L"Rarity", stream.str());
 
-    drawSetting(L"Biome Size (restart)", m_options.largerBiomes == Options::BiomesWithPlaces ? L"1.5x"
-                                         : m_options.largerBiomes                            ? L"1.5x Classic"
-                                                                                             : L"1.0x");
+    drawSetting(L"Biome Size (restart)", m_options.largerBiomes ? L"1.5x" : L"1.0x");
     // The world is built with its terrain at the start, and Alpha terrain keeps saves of its own.
     drawSetting(L"Alpha Terrain (restart)", m_options.alphaTerrain ? L"ON" : L"OFF");
     // Alpha lighting is baked into the terrain meshes when they are built, so it applies at the next start.
@@ -807,20 +805,9 @@ void OptionsWidget::ToggleFrameStats()
     m_options.frameStats = !m_options.frameStats;
 }
 
-// 1.0x, then 1.5x with the places following the biomes, then 1.5x Classic (the first 1.5x worlds' layout).
 void OptionsWidget::ToggleBiomeSize()
 {
-    switch (m_options.largerBiomes) {
-    case Options::BiomesNative:
-        m_options.largerBiomes = Options::BiomesWithPlaces;
-        break;
-    case Options::BiomesWithPlaces:
-        m_options.largerBiomes = Options::BiomesClassic;
-        break;
-    default:
-        m_options.largerBiomes = Options::BiomesNative;
-        break;
-    }
+    m_options.largerBiomes = !m_options.largerBiomes;
 }
 
 void OptionsWidget::ToggleAlphaTerrain()
