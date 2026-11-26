@@ -324,10 +324,11 @@ enum ManaAbilityMembership : unsigned long long {
 };
 
 World::World(SpriteManager *spriteManager, std::shared_ptr<AlphaTerrain> alphaTerrain, bool largerBiomes,
-             bool pyroProgression, bool aquaticEnemies)
+             bool pyroProgression, bool aquaticEnemies, bool placesFollowBiomes)
     : m_spriteManager(spriteManager),
       m_alphaTerrain(std::move(alphaTerrain)),
       m_largerBiomes(largerBiomes),
+      m_placesFollowBiomes(largerBiomes && placesFollowBiomes),
       m_pyroProgression(pyroProgression),
       m_aquaticEnemies(aquaticEnemies),
       m_aiManager(this),
@@ -336,6 +337,8 @@ World::World(SpriteManager *spriteManager, std::shared_ptr<AlphaTerrain> alphaTe
       m_clock(0),
       m_localCreature(nullptr)
 {
+    // Places follow the biomes by spreading over cells as much larger.
+    BlocksPerPlace = m_placesFollowBiomes ? NativeBlocksPerPlace * 3 / 2 : NativeBlocksPerPlace;
     installNoise();
     m_petRaces.push_back(RaceBunny);
     m_petRaces.push_back(RaceMole);
@@ -2249,11 +2252,11 @@ plasma::Vector<2, int> World::dungeonPosition(int x, int y, int type, bool large
         position[0] = position[0] + random(x + 566485, y) % 5 * CellsPerDungeonRoom - 2 * CellsPerDungeonRoom;
         position[1] = position[1] + random(x + 293184, y) % 5 * CellsPerDungeonRoom - 2 * CellsPerDungeonRoom;
     }
-    position[0] = (std::min)((std::max)(position[0], floorDivide(x << 10, BlocksPerCell)),
-                             floorDivide(x << 10, BlocksPerCell) +
+    position[0] = (std::min)((std::max)(position[0], floorDivide(x * BlocksPerPlace, BlocksPerCell)),
+                             floorDivide(x * BlocksPerPlace, BlocksPerCell) +
                                  (!large ? BlocksPerPlace / BlocksPerCell : 2 * BlocksPerPlace / BlocksPerCell) - 1);
-    position[1] = (std::min)((std::max)(position[1], floorDivide(y << 10, BlocksPerCell)),
-                             floorDivide(y << 10, BlocksPerCell) +
+    position[1] = (std::min)((std::max)(position[1], floorDivide(y * BlocksPerPlace, BlocksPerCell)),
+                             floorDivide(y * BlocksPerPlace, BlocksPerCell) +
                                  (!large ? BlocksPerPlace / BlocksPerCell : 2 * BlocksPerPlace / BlocksPerCell) - 1);
     return position;
 }
@@ -2502,18 +2505,18 @@ int World::dungeonZLevel(int x, int y)
         plasma::Vector<2, int> center = placeCenter(cellX, cellY, large);
         int direction = DungeonDirectionWest;
         int distance = 0;
-        if (center[0] - (cellX << 11) > distance) {
-            distance = center[0] - (cellX << 11);
+        if (center[0] - cellX * 2 * BlocksPerPlace > distance) {
+            distance = center[0] - cellX * 2 * BlocksPerPlace;
         }
-        direction = center[1] - (cellY << 11) <= distance ? DungeonDirectionWest : DungeonDirectionSouth;
-        if (center[1] - (cellY << 11) > distance) {
-            distance = center[1] - (cellY << 11);
+        direction = center[1] - cellY * 2 * BlocksPerPlace <= distance ? DungeonDirectionWest : DungeonDirectionSouth;
+        if (center[1] - cellY * 2 * BlocksPerPlace > distance) {
+            distance = center[1] - cellY * 2 * BlocksPerPlace;
         }
-        if (((cellX + 2) << 10) - center[0] > distance) {
+        if ((cellX + 2) * BlocksPerPlace - center[0] > distance) {
             direction = DungeonDirectionEast;
-            distance = ((cellX + 2) << 10) - center[0];
+            distance = (cellX + 2) * BlocksPerPlace - center[0];
         }
-        if ((cellY + 2) * 1024 - center[1] > distance) {
+        if ((cellY + 2) * BlocksPerPlace - center[1] > distance) {
             direction = DungeonDirectionNorth;
         }
         Corridor corridor = dungeonWay(floorDivide(x, CellsPerDungeonRoom), floorDivide(y, CellsPerDungeonRoom),
@@ -3859,24 +3862,24 @@ bool World::isGroundItemAvailable(const ZoneItem &item)
 }
 
 // A hall ends at the place's edge room: the room index of the first or last block of the place (the place index
-// shifted by 10: BlocksPerPlace; 2047 the last block of a large place), BlocksPerDungeonRoom blocks per room;
-// isHallNearEnd one room before.
+// times BlocksPerPlace; two cells on, less one, the last block of a large place), BlocksPerDungeonRoom blocks per
+// room; isHallNearEnd one room before.
 bool isHallEnd(int x, int y, int direction, int startX, int startY, int regionX, int regionY)
 {
     if (direction == DungeonDirectionWest) {
-        if (x == floorDivide(regionX << 10, BlocksPerDungeonRoom)) {
+        if (x == floorDivide(regionX * BlocksPerPlace, BlocksPerDungeonRoom)) {
             return y == dungeonWayY(x - 1, startX, startY, regionX, regionY);
         }
     } else if (direction == DungeonDirectionSouth) {
-        if (y == floorDivide(regionY << 10, BlocksPerDungeonRoom)) {
+        if (y == floorDivide(regionY * BlocksPerPlace, BlocksPerDungeonRoom)) {
             return x == dungeonWayX(y - 1, startX, startY, regionX, regionY);
         }
     } else if (direction == DungeonDirectionEast) {
-        if (x == floorDivide((regionX << 10) + 2047, BlocksPerDungeonRoom)) {
+        if (x == floorDivide((regionX + 2) * BlocksPerPlace - 1, BlocksPerDungeonRoom)) {
             return y == dungeonWayY(x + 1, startX, startY, regionX, regionY);
         }
     } else if (direction == DungeonDirectionNorth) {
-        if (y == floorDivide((regionY << 10) + 2047, BlocksPerDungeonRoom)) {
+        if (y == floorDivide((regionY + 2) * BlocksPerPlace - 1, BlocksPerDungeonRoom)) {
             return x == dungeonWayX(y + 1, startX, startY, regionX, regionY);
         }
     }
@@ -4939,8 +4942,7 @@ plasma::Vector<3, Fixed> World::nearestShrine(const plasma::Vector<3, Fixed> &po
         int lastY = floorDivide(tileCoordinate(position[1] + span), BlocksPerPlace / BlocksPerCell);
         for (int regionX = firstX; regionX <= lastX; ++regionX) {
             for (int regionY = firstY; regionY <= lastY; ++regionY) {
-                plasma::Vector<2, int> cell(regionX * 64 + 1 + random(regionX + 148289, regionY) % 62,
-                                            regionY * 64 + 1 + random(regionX + 1464073, regionY) % 62);
+                const plasma::Vector<2, int> cell = siteInZone(regionX, regionY);
                 if (findRegion(cell[0] * BlocksPerCell + BlocksPerCell / 2,
                                cell[1] * BlocksPerCell + BlocksPerCell / 2) != m_localCreature->m_entityData.region)
                     continue;
@@ -5513,8 +5515,10 @@ void World::saveState(const WorldState &state)
 
 plasma::Vector<2, int> World::siteInZone(int x, int y)
 {
-    return plasma::Vector<2, int>((x << 6) + 1 + random(x + 148289, y) % 62,
-                                  random(x + 1464073, y) % 62 + (y << 6) + 1);
+    // A cell of the place's 16-block cells, one in from its edges.
+    const int cells = BlocksPerPlace / BlocksPerCell;
+    return plasma::Vector<2, int>(x * cells + 1 + random(x + 148289, y) % (cells - 2),
+                                  random(x + 1464073, y) % (cells - 2) + y * cells + 1);
 }
 
 float World::BiomeSample::snow()
@@ -8000,6 +8004,8 @@ void World::init(int seed, const std::string &name)
 
 const char *World::saveDirectory() const
 {
+    if (m_placesFollowBiomes)
+        return m_alphaTerrain ? "Save/AlphaTerrain-v1-Biomes150-Places" : "Save/Biomes150-Places-v1";
     if (m_largerBiomes)
         return m_alphaTerrain ? "Save/AlphaTerrain-v1-Biomes150" : "Save/Biomes150-v1";
     return m_alphaTerrain ? AlphaTerrain::SaveDirectory : "Save";
@@ -8010,7 +8016,7 @@ int World::networkProtocolVersion() const
     // Both peers need the same Alpha terrain profile.
     const int protocol = m_alphaTerrain ? AlphaTerrain::ProtocolVersion : 100100;
     return protocol + (m_alphaTerrain ? 1 : 0) + (m_largerBiomes ? 2 : 0) + (m_pyroProgression ? 4 : 0) +
-           (m_aquaticEnemies ? 8 : 0);
+           (m_aquaticEnemies ? 8 : 0) + (m_placesFollowBiomes ? 16 : 0);
 }
 
 // The wind (a hand-tuned profile): noises at 0.02 sampled at raw fixed-point phases, of amplitude 8 in x and y and
@@ -8202,16 +8208,16 @@ StructureCell World::structureCell(int x, int y, bool flag)
         return StructureCell(StructureCell_None, 0, 0, 0);
     plasma::Vector<2, int> center = placeCenter(regionX, regionY, large);
     int direction = NeighbourSide_South;
-    int longest = (std::max)(0, center[0] - (regionX << 11));
-    if (center[1] - (regionY << 11) > longest)
-        longest = center[1] - (regionY << 11);
+    int longest = (std::max)(0, center[0] - regionX * 2 * BlocksPerPlace);
+    if (center[1] - regionY * 2 * BlocksPerPlace > longest)
+        longest = center[1] - regionY * 2 * BlocksPerPlace;
     else
         direction = NeighbourSide_West;
-    if (((regionX + 2) << 10) - center[0] > longest) {
+    if ((regionX + 2) * BlocksPerPlace - center[0] > longest) {
         direction = NeighbourSide_East;
-        longest = ((regionX + 2) << 10) - center[0];
+        longest = (regionX + 2) * BlocksPerPlace - center[0];
     }
-    if (((regionY + 2) << 10) - center[1] > longest)
+    if ((regionY + 2) * BlocksPerPlace - center[1] > longest)
         direction = NeighbourSide_North;
     int roomX = floorDivide(x, 8);
     int roomY = floorDivide(y, 8);

@@ -4504,10 +4504,10 @@ void Zone::generate()
                                             }
                                         }
                                     } else if (info.type == PlaceCastle) {
-                                        int castleX0 = toCell(placeX << 10);
-                                        int castleX1 = toCell((placeX << 10) + 2 * BlocksPerPlace);
-                                        int castleY0 = toCell(placeY << 10);
-                                        int castleY1 = toCell((placeY << 10) + 2 * BlocksPerPlace);
+                                        int castleX0 = toCell(placeX * BlocksPerPlace);
+                                        int castleX1 = toCell((placeX + 2) * BlocksPerPlace);
+                                        int castleY0 = toCell(placeY * BlocksPerPlace);
+                                        int castleY1 = toCell((placeY + 2) * BlocksPerPlace);
                                         for (int px = castleX0; px < castleX1; px++) {
                                             for (int py = castleY0; py < castleY1; py++) {
                                                 int castleType = m_world->zoneBuildingType(px, py);

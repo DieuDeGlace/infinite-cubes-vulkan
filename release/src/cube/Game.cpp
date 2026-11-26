@@ -214,7 +214,7 @@ Game::Game(World *world, WorldMap *worldMap, gfx::Renderer *renderer, plasma::En
       m_audio(audio),
       m_interface(this),
       m_host(m_world->m_spriteManager, m_world->m_alphaTerrain, m_world->m_largerBiomes, m_world->m_pyroProgression,
-             m_world->m_aquaticEnemies),
+             m_world->m_aquaticEnemies, m_world->m_placesFollowBiomes),
       m_client(this),
       m_currentWorld(0),
       m_gamepadActive(false),
@@ -729,7 +729,8 @@ void Game::applyOptions(const Options &options)
     m_world->leaveZoneMeshes();
     // The world is created with its terrain and biome size (main.cpp, AndroidMain.cpp).
     const bool profileChanged = (m_options.alphaTerrain != 0) != (m_world->m_alphaTerrain != nullptr) ||
-                                (m_options.largerBiomes != 0) != m_world->m_largerBiomes;
+                                (m_options.largerBiomes != 0) != m_world->m_largerBiomes ||
+                                (m_options.largerBiomes == Options::BiomesWithPlaces) != m_world->m_placesFollowBiomes;
     if (profileChanged) {
         // Only a character in play is saved: in the start menu and the character screens the local creature is a
         // preview without the saved character's player data (its hair gradient among them).

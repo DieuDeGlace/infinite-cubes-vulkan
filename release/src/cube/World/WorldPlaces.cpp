@@ -6,6 +6,9 @@
 #include <limits>
 
 namespace cube {
+
+int BlocksPerPlace = NativeBlocksPerPlace;
+
 namespace {
 
 plasma::Vector<2, long long> nativeLandCenter(int x, int y)

@@ -72,7 +72,7 @@ public:
     };
 
     explicit Host(SpriteManager *spriteManager, std::shared_ptr<AlphaTerrain> alphaTerrain, bool largerBiomes,
-                  bool pyroProgression, bool aquaticEnemies);
+                  bool pyroProgression, bool aquaticEnemies, bool placesFollowBiomes);
     virtual ~Host();
 
     // Queues a copy of a packet received from the local client with its sender (under m_receivedPacketsLock). Called

@@ -211,8 +211,11 @@ public:
         std::map<long long, State> m_states; // Creature ID key.
     };
 
+    // placesFollowBiomes (with largerBiomes): the places and the roads between them stretch with the biomes
+    // (BlocksPerPlace).
     explicit World(SpriteManager *spriteManager, std::shared_ptr<AlphaTerrain> alphaTerrain = {},
-                   bool largerBiomes = false, bool pyroProgression = false, bool aquaticEnemies = false);
+                   bool largerBiomes = false, bool pyroProgression = false, bool aquaticEnemies = false,
+                   bool placesFollowBiomes = false);
     virtual ~World();
     const char *saveDirectory() const;
     int networkProtocolVersion() const;
@@ -456,14 +459,19 @@ public:
         if (x == 0 && y == 0) {
             return plasma::Vector<2, int>(BlocksPerPlace / 2, BlocksPerPlace / 2);
         }
+        // Drawn in the 1.0x cell and scaled with it, so a place keeps its spot in biomes stretched as far.
+        const auto scaled = [](long long native) {
+            return int(std::floor(double(native) * BlocksPerPlace / NativeBlocksPerPlace));
+        };
         if (large) {
             x = floorDivide(x, 2) * 2;
             y = floorDivide(y, 2) * 2;
-            return plasma::Vector<2, int>(random(x + 502572, y) % 984 + 532 + x * BlocksPerPlace,
-                                          random(x + 2561335, y) % 984 + 532 + y * BlocksPerPlace);
+            return plasma::Vector<2, int>(
+                scaled(random(x + 502572, y) % 984 + 532 + (long long)x * NativeBlocksPerPlace),
+                scaled(random(x + 2561335, y) % 984 + 532 + (long long)y * NativeBlocksPerPlace));
         }
-        return plasma::Vector<2, int>(random(x + 502572, y) % 460 + 282 + x * BlocksPerPlace,
-                                      random(x + 2561335, y) % 460 + 282 + y * BlocksPerPlace);
+        return plasma::Vector<2, int>(scaled(random(x + 502572, y) % 460 + 282 + (long long)x * NativeBlocksPerPlace),
+                                      scaled(random(x + 2561335, y) % 460 + 282 + (long long)y * NativeBlocksPerPlace));
     }
     // The same for a cell whose size is looked up.
     plasma::Vector<2, int> placeCenter(int x, int y) { return placeCenter(x, y, isLargePlace(x, y)); }
@@ -855,6 +863,7 @@ public:
     SpriteManager *m_spriteManager; // the constructor's argument
     const std::shared_ptr<AlphaTerrain> m_alphaTerrain;
     const bool m_largerBiomes;
+    const bool m_placesFollowBiomes;
     const bool m_pyroProgression;
     const bool m_aquaticEnemies;
     bool m_travelDungeons = false; // set before any zone is generated

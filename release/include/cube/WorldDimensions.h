@@ -6,7 +6,11 @@ namespace cube {
 
 const int BlocksPerZone = 64;                               // a zone is 64 x 64 blocks (columns)
 const int BlocksPerCell = 16;                               // a structure cell is 16 x 16 blocks
-const int BlocksPerPlace = 1024;                            // a place cell is 1024 x 1024 blocks (16 x 16 zones)
+// A place cell is 1024 x 1024 blocks (16 x 16 zones), or 1536 where places and roads follow the 1.5x biomes. The world
+// sets it when it is made (World::World); a process runs one layout, and changing it restarts the game.
+extern int BlocksPerPlace;
+// The place cell of the 1.0x layout, in which placeCenter draws a place's position before scaling it to BlocksPerPlace.
+const int NativeBlocksPerPlace = 1024;
 const int ZonesPerRegion = 64;                              // a region is 64 x 64 zones
 const int BlocksPerRegion = BlocksPerZone * ZonesPerRegion; // 4096: a region is 4096 x 4096 blocks
 const int BlocksPerLand = 8192;                             // a land is 8192 x 8192 blocks

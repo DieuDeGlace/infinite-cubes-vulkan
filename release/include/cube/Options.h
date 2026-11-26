@@ -36,7 +36,14 @@ struct Options {
     int antiAliasingSamples; // Initially 8.
     int waterLilies;         // Initially 1.
     int alphaTerrain;        // Read at startup. Uses its own saves.
-    int largerBiomes;        // Read at startup. Selects 1.5x biome spacing.
+    // largerBiomes values: 1.0x biomes; 1.5x biomes over the 1.0x places and roads (the first 1.5x worlds, kept in
+    // their own saves); 1.5x biomes with the places and roads stretched along (World::m_placesFollowBiomes).
+    enum BiomeSize {
+        BiomesNative = 0,
+        BiomesClassic = 1,
+        BiomesWithPlaces = 2
+    };
+    int largerBiomes; // Read at startup. A BiomeSize.
     int pyroProgression;
     int aquaticEnemies;
     int spawnDensity;   // Read at startup. Wild enemy groups, percent of native (50..400).
