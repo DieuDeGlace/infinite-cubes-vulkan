@@ -10,8 +10,8 @@ namespace cube {
 
 class Game;
 
-// At the middle left: a row for each of swimming, climbing and riding trained in the last minute, fading out after
-// about a minute (Game::travelBarAlpha). The widget draws each row's icon; Interface places a copy of the level bar
+// At the middle left: a row for each of swimming, climbing, riding and pet taming trained in the last minute, fading out
+// after about a minute (Game::travelBarAlpha). The widget draws each row's icon; Interface places a copy of the level bar
 // ("levelinfo") beside it with the name, level and progress to the next level.
 class TravelSkillBarWidget : public BaseWidget {
 public:
@@ -29,13 +29,14 @@ public:
     int visibleRows() const;
     Row row(int skill) const;
 
-    static constexpr const wchar_t *Names[] = {L"Swimming", L"Climbing", L"Riding"};
+    static constexpr int SkillCount = 4;
+    static constexpr const wchar_t *Names[SkillCount] = {L"Swimming", L"Climbing", L"Riding", L"Pet Taming"};
     static constexpr float RowHeight = 32.0f; // a 26-unit icon and a gap
     static constexpr float IconSize = 26.0f;
     static constexpr float IconGap = 6.0f; // between the icon and its bar
 
     Game *m_game;
-    plasma::Texture *m_icons[3] = {}; // swimming, climbing, riding
+    plasma::Texture *m_icons[SkillCount] = {}; // swimming, climbing, riding, pet taming
 };
 
 }

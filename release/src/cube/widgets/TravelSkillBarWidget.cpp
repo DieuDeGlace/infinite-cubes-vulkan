@@ -21,12 +21,13 @@ TravelSkillBarWidget::TravelSkillBarWidget(Game *game, plasma::Node *node)
     m_icons[0] = m_engine->createTexture(SkillIconSize, SkillIconSize, SwimmingIconPixels, format);
     m_icons[1] = m_engine->createTexture(SkillIconSize, SkillIconSize, ClimbingIconPixels, format);
     m_icons[2] = m_engine->createTexture(SkillIconSize, SkillIconSize, RidingIconPixels, format);
+    m_icons[3] = m_engine->createTexture(SkillIconSize, SkillIconSize, TamingIconPixels, format);
 }
 
 int TravelSkillBarWidget::visibleRows() const
 {
     int rows = 0;
-    for (int i = 0; i < 3; ++i)
+    for (int i = 0; i < SkillCount; ++i)
         rows += m_game->travelBarAlpha(i) > 0.0f;
     return rows;
 }
@@ -39,9 +40,9 @@ TravelSkillBarWidget::Row TravelSkillBarWidget::row(int skill) const
         return row;
     row.alpha = m_game->travelBarAlpha(skill);
     const float seconds[] = {player->m_playerData->swimmingSeconds, player->m_playerData->climbingSeconds,
-                             player->m_playerData->ridingSeconds};
+                             player->m_playerData->ridingSeconds, player->m_playerData->tamingPoints};
     row.level = Creature::travelSkillLevel(seconds[skill]);
-    // Level n is reached after 6 n^2 seconds.
+    // Level n is reached after 6 n^2 seconds (pet taming: points).
     row.progress = 1.0f;
     if (row.level < Creature::TravelSkillCap) {
         const float from = 6.0f * row.level * row.level, to = 6.0f * (row.level + 1) * (row.level + 1);
@@ -54,7 +55,7 @@ void TravelSkillBarWidget::draw()
 {
     // The icons, one row each, in the order Interface places the bars.
     float y = 0.0f;
-    for (int i = 0; i < 3; ++i) {
+    for (int i = 0; i < SkillCount; ++i) {
         const float alpha = row(i).alpha;
         if (alpha <= 0.0f)
             continue;

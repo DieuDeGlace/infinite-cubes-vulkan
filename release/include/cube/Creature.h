@@ -252,6 +252,7 @@ struct PlayerData : CharacterStyle {
     float swimmingSeconds = 0.0f;
     float climbingSeconds = 0.0f;
     float ridingSeconds = 0.0f; // riding counts in full, walking with a pet out at half
+    float tamingPoints = 0.0f;  // the pet's hits on enemies: 1 each, 2 for the killing hit
     Item usableSpecialItem;
     Item contextItem;         // the renderer calls the Item method on it
     int contextItemCount = 0; // Initially zero; copied with the player data.
@@ -570,21 +571,23 @@ public:
     // The movement skills: each maps a skill level (the artifact skill for the player, ten times the level for others)
     // onto a speed.
     float climbingSpeed();
-    // Swimming and climbing levels, 0..TravelSkillCap, earned by time spent at them (level n after 6 n^2 seconds);
-    // each adds TravelSkillBonus to that speed. 0 for creatures without player data.
+    // Swimming, climbing and riding levels, 0..TravelSkillCap, earned by time spent at them (level n after 6 n^2
+    // seconds); each adds TravelSkillBonus to that speed. Pet taming levels the same way from PlayerData::tamingPoints.
+    // 0 for creatures without player data.
     static constexpr int TravelSkillCap = 100;
     static constexpr float TravelSkillBonus = 0.0005f;
     static int travelSkillLevel(float seconds);
     int swimmingLevel() const;
     int climbingLevel() const;
     int ridingLevel() const;
-    // The skill a travel item needs at Item::TravelGearLevel (the glider climbing, the boat swimming, the reins riding),
-    // its name, and whether the creature has it: true for the climbing spikes and other items.
+    int tamingLevel() const;
+    // The skill a travel item needs at Item::TravelGearLevel (the glider climbing, the boat swimming, the reins pet
+    // taming), its name, and whether the creature has it: true for the climbing spikes and other items.
     enum TravelSkill {
         TravelSkillNone,
         TravelSkillClimbing,
         TravelSkillSwimming,
-        TravelSkillRiding
+        TravelSkillTaming
     };
     static int travelGearSkill(int specialItem);
     static const wchar_t *travelSkillName(int skill);

@@ -90,7 +90,7 @@ struct Item {
 
     // With the travel sites turned into dungeons (World::m_travelDungeons), the hang glider, boat, climbing spikes and
     // reins are sold in general stores and work in every region; the glider, boat and reins need climbing, swimming or
-    // riding level TravelGearLevel (Creature::travelGearSkill).
+    // pet taming level TravelGearLevel (Creature::travelGearSkill).
     static inline bool s_travelGearAnywhere = false;
     static constexpr int TravelGearLevel = 5;
     static constexpr int TravelGearPrice = 1000; // ten silver

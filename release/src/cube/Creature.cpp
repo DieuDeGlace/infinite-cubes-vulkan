@@ -794,6 +794,11 @@ int Creature::ridingLevel() const
     return m_playerData ? travelSkillLevel(m_playerData->ridingSeconds) : 0;
 }
 
+int Creature::tamingLevel() const
+{
+    return m_playerData ? travelSkillLevel(m_playerData->tamingPoints) : 0;
+}
+
 int Creature::travelGearSkill(int specialItem)
 {
     switch (specialItem) {
@@ -802,7 +807,7 @@ int Creature::travelGearSkill(int specialItem)
     case SpecialItemBoat:
         return TravelSkillSwimming;
     case SpecialItemReins:
-        return TravelSkillRiding;
+        return TravelSkillTaming;
     default:
         return TravelSkillNone;
     }
@@ -815,8 +820,8 @@ const wchar_t *Creature::travelSkillName(int skill)
         return L"climbing";
     case TravelSkillSwimming:
         return L"swimming";
-    case TravelSkillRiding:
-        return L"riding";
+    case TravelSkillTaming:
+        return L"pet taming";
     default:
         return L"";
     }
@@ -829,8 +834,8 @@ bool Creature::meetsTravelGearSkill(int specialItem) const
         return climbingLevel() >= Item::TravelGearLevel;
     case TravelSkillSwimming:
         return swimmingLevel() >= Item::TravelGearLevel;
-    case TravelSkillRiding:
-        return ridingLevel() >= Item::TravelGearLevel;
+    case TravelSkillTaming:
+        return tamingLevel() >= Item::TravelGearLevel;
     default:
         return true;
     }

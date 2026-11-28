@@ -27,6 +27,7 @@ CharacterWidget::CharacterWidget(Game *game, plasma::Node *node)
     m_climbingIcon = m_engine->createTexture(SkillIconSize, SkillIconSize, ClimbingIconPixels, format);
     m_swimmingIcon = m_engine->createTexture(SkillIconSize, SkillIconSize, SwimmingIconPixels, format);
     m_ridingIcon = m_engine->createTexture(SkillIconSize, SkillIconSize, RidingIconPixels, format);
+    m_tamingIcon = m_engine->createTexture(SkillIconSize, SkillIconSize, TamingIconPixels, format);
 }
 
 void CharacterWidget::draw()
@@ -306,6 +307,21 @@ void CharacterWidget::draw()
             break;
         }
         renderText(text.str(), 240.0f, (float)y);
+    }
+
+    // Pet taming, trained by the pet's fights; the reins need level Item::TravelGearLevel when they work everywhere.
+    std::swap(rowColor, otherColor);
+    y += 20;
+    const Creature *player = m_game->m_world->m_localCreature;
+    renderImage(m_tamingIcon, 0.0f, (float)y - 14.0f, 16.0f, 16.0f);
+    text.str(L"");
+    text << L"Pet Taming Lv " << player->tamingLevel();
+    setTextColor(rowColor);
+    renderText(text.str(), 20.0f, (float)y);
+    if (Item::s_travelGearAnywhere) {
+        const bool reins = player->tamingLevel() >= Item::TravelGearLevel;
+        setTextColor(reins ? rowColor : plasma::Vector<4, float>(1.0f, 0.4f, 0.35f, 1.0f));
+        renderText(reins ? L"Reins" : L"Reins at Lv " + std::to_wstring(Item::TravelGearLevel), 240.0f, (float)y);
     }
 }
 

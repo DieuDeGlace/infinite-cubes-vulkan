@@ -616,7 +616,7 @@ void Interface::load(const std::vector<ResolutionInfo> *displayModes)
         new TravelSkillBarWidget(m_game, m_game->m_engine->createNode(nullptr, nullptr, nullptr, m_inGame.m_node));
     m_inGame.m_travelSkillBars->getNode()->setIgnoresPointer(true);
     // The travel-skill bars are the level bar in small.
-    for (int i = 0; i < 3; ++i) {
+    for (int i = 0; i < TravelSkillBarWidget::SkillCount; ++i) {
         plasma::Node *bar = m_inGame.m_levelInfo->clone(m_inGame.m_node);
         bar->setIgnoresPointer(true);
         bar->transformation()->m_deformation.value().identity();
@@ -1684,7 +1684,7 @@ void Interface::update(float step)
     float rowTop = (m_inGame.m_viewHeight - skillRows * TravelSkillBarWidget::RowHeight) * 0.5f;
     m_inGame.m_travelSkillBars->getNode()->setPosition(0.0f, rowTop, Left, 0.0f);
     m_inGame.m_travelSkillBars->getNode()->setVisible(showSkills);
-    for (int i = 0; i < 3; ++i) {
+    for (int i = 0; i < TravelSkillBarWidget::SkillCount; ++i) {
         plasma::Node *bar = m_inGame.m_travelBars[i];
         const TravelSkillBarWidget::Row row = m_inGame.m_travelSkillBars->row(i);
         if (!showSkills || row.alpha <= 0.0f) {

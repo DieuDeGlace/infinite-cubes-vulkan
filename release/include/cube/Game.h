@@ -296,12 +296,12 @@ public:
     void mirrorEncounters(World &host);
     // Saves the character with the host's current encounters.
     void saveEncounterProgress();
-    // Announces a new swimming or climbing level.
+    // Announces a new swimming, climbing, riding or pet taming level.
     void updateTravelSkills();
-    std::array<int, 3> m_shownTravelLevels {-1, -1, -1}; // swimming, climbing, riding
-    // The HUD's travel-skill bars: when each skill last gained time (Game clock, seconds), and the time it had.
-    std::array<double, 3> m_travelTrainedAt {-1.0e9, -1.0e9, -1.0e9};
-    std::array<float, 3> m_travelSeenSeconds {-1.0f, -1.0f, -1.0f};
+    std::array<int, 4> m_shownTravelLevels {-1, -1, -1, -1}; // swimming, climbing, riding, pet taming
+    // The HUD's travel-skill bars: when each skill last gained time or points (Game clock, seconds), and what it had.
+    std::array<double, 4> m_travelTrainedAt {-1.0e9, -1.0e9, -1.0e9, -1.0e9};
+    std::array<float, 4> m_travelSeenSeconds {-1.0f, -1.0f, -1.0f, -1.0f};
     // How visible skill i's bar is now: swimming and climbing fade over five seconds after a minute idle.
     float travelBarAlpha(int skill) const;
     void appendEncounterQuests(std::vector<TrackedQuest> &quests);

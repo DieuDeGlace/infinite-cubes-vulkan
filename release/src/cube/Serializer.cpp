@@ -17,6 +17,7 @@ constexpr int EncounterSaveVersion = 15;
 constexpr int TownEncounterSaveVersion = 16;
 constexpr int TravelSkillSaveVersion = 17;
 constexpr int RidingSkillSaveVersion = 18;
+constexpr int TamingSkillSaveVersion = 19;
 
 void loadTownQuests(BytesIO &stream, std::vector<TownQuest> &quests)
 {
@@ -125,7 +126,7 @@ void saveTownQuests(BytesIO &stream, const std::vector<TownQuest> &quests)
 
 Serializer::Serializer(BytesIO *stream)
     : m_stream(stream),
-      m_version(RidingSkillSaveVersion),
+      m_version(TamingSkillSaveVersion),
       m_loadedVersion(0),
       m_stateVersion(44),
       m_unused14(0),
@@ -406,6 +407,11 @@ void Serializer::loadCreature(Creature *creature)
         m_stream->read(riding);
         creature->m_playerData->ridingSeconds = std::isfinite(riding) ? std::max(0.0f, riding) : 0.0f;
     }
+    if (m_loadedVersion >= TamingSkillSaveVersion && m_stream->size() - m_stream->m_offset >= 4) {
+        float taming = 0.0f;
+        m_stream->read(taming);
+        creature->m_playerData->tamingPoints = std::isfinite(taming) ? std::max(0.0f, taming) : 0.0f;
+    }
     if (creature->m_pyroProgression)
         creature->m_entityData.xp = std::clamp(creature->m_entityData.xp, 0,
                                                progression::xpToNext(creature->m_entityData.progressionLevel) - 1);
@@ -638,6 +644,7 @@ void Serializer::saveCreature(Creature *creature)
     m_stream->write(creature->m_playerData->swimmingSeconds);
     m_stream->write(creature->m_playerData->climbingSeconds);
     m_stream->write(creature->m_playerData->ridingSeconds);
+    m_stream->write(creature->m_playerData->tamingPoints);
 }
 
 // Writes the format version (m_stateVersion), the day and the time, the two id sets and, for every zone record, its

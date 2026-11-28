@@ -762,6 +762,14 @@ void World::applyHit(const ServerUpdates::HitPacket &hit)
             }
         }
     }
+    // A pet's hits on enemies train its owner's pet taming: 1 a hit, 2 for the hit that kills.
+    if (hit.damage > 0.0f && attacker && attacker->m_entityData.hostilityType == HostilityPet &&
+        (target->m_entityData.hostilityType == HostilityEnemy ||
+         target->m_entityData.hostilityType == HostilityNeutral)) {
+        Creature *owner = creatureByID(attacker->m_entityData.ownerId);
+        if (owner && owner->m_playerData)
+            owner->m_playerData->tamingPoints += target->m_entityData.hp <= 0.0f ? 2.0f : 1.0f;
+    }
     if (target->m_entityData.hp <= 0.0f) {
         target->m_entityData.hp = 0.0f;
         ServerUpdates::SoundPacket sound;

@@ -2402,9 +2402,9 @@ void Game::learnFormulas(int rarity)
 // compressed character record) into creature. A character that does not know formula 7 yet learns it.
 void Game::loadCharacter(int slot, Creature *creature)
 {
-    m_shownTravelLevels = {-1, -1, -1}; // a loaded character's levels are not news
-    m_travelSeenSeconds = {-1.0f, -1.0f, -1.0f};
-    m_travelTrainedAt = {-1.0e9, -1.0e9, -1.0e9};
+    m_shownTravelLevels = {-1, -1, -1, -1}; // a loaded character's levels are not news
+    m_travelSeenSeconds = {-1.0f, -1.0f, -1.0f, -1.0f};
+    m_travelTrainedAt = {-1.0e9, -1.0e9, -1.0e9, -1.0e9};
     m_world->enterZoneMeshes();
     creature->m_pyroProgression = m_world->m_pyroProgression;
     std::stringstream key;
@@ -9564,26 +9564,29 @@ void Game::updateTravelSkills()
     Creature *player = m_world->getLocalCreature();
     if (!player || !player->m_playerData)
         return;
-    const int levels[] = {player->swimmingLevel(), player->climbingLevel(), player->ridingLevel()};
+    const int levels[] = {player->swimmingLevel(), player->climbingLevel(), player->ridingLevel(),
+                          player->tamingLevel()};
     const float seconds[] = {player->m_playerData->swimmingSeconds, player->m_playerData->climbingSeconds,
-                             player->m_playerData->ridingSeconds};
+                             player->m_playerData->ridingSeconds, player->m_playerData->tamingPoints};
     const double now = std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count();
-    for (int i = 0; i < 3; ++i) {
+    for (int i = 0; i < 4; ++i) {
         // Time gained since the last look shows that skill's bar; the first look (a loaded character) does not.
         if (m_travelSeenSeconds[i] >= 0.0f && seconds[i] > m_travelSeenSeconds[i])
             m_travelTrainedAt[i] = now;
         m_travelSeenSeconds[i] = seconds[i];
     }
-    static constexpr const wchar_t *Names[] = {L"Swimming", L"Climbing", L"Riding"};
-    for (int i = 0; i < 3; ++i) {
+    static constexpr const wchar_t *Names[] = {L"Swimming", L"Climbing", L"Riding", L"Pet Taming"};
+    for (int i = 0; i < 4; ++i) {
         // The first look (a loaded character) only remembers the levels.
         if (m_shownTravelLevels[i] >= 0 && levels[i] > m_shownTravelLevels[i]) {
             std::wstringstream text;
             text.setf(std::ios::fixed);
             text.precision(2);
-            text << Names[i] << L" level " << levels[i] << L": +" << levels[i] * Creature::TravelSkillBonus * 100.0f
-                 << L"% " << Names[i] << L" speed";
-            if (levels[i] == Item::TravelGearLevel && Item::s_travelGearAnywhere)
+            text << Names[i] << L" level " << levels[i];
+            // Pet taming adds no speed; it opens the reins.
+            if (i < 3)
+                text << L": +" << levels[i] * Creature::TravelSkillBonus * 100.0f << L"% " << Names[i] << L" speed";
+            if (i != 2 && levels[i] == Item::TravelGearLevel && Item::s_travelGearAnywhere)
                 text << (i == 0   ? L". You can use a boat now"
                          : i == 1 ? L". You can use a hang glider now"
                                   : L". You can use reins now");

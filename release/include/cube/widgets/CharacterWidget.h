@@ -22,6 +22,7 @@ public:
     plasma::Texture *m_climbingIcon = nullptr;
     plasma::Texture *m_swimmingIcon = nullptr;
     plasma::Texture *m_ridingIcon = nullptr;
+    plasma::Texture *m_tamingIcon = nullptr;
 };
 
 }

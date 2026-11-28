@@ -125,16 +125,16 @@ struct Interface {
         InventoryWidget *m_equipmentInventoryWidget;
         CharacterWidget *m_characterWidget;
         TravelSkillBarWidget *m_travelSkillBars; // the travel-skill icons, at the middle left
-        plasma::Node *m_travelBars[3] = {};      // a scaled copy of m_levelInfo beside each icon
-        plasma::Node *m_travelBarFills[3] = {};  // "xpbar" under each
+        plasma::Node *m_travelBars[4] = {};      // a scaled copy of m_levelInfo beside each icon
+        plasma::Node *m_travelBarFills[4] = {};  // "xpbar" under each
         // Each cloned shape draws its own colour. Keep its original opacity for the travel bar's fade.
         struct BarColor {
             plasma::ContinuousAttribute<plasma::Vector<4, float>> *attribute;
             float opacity;
         };
-        std::vector<BarColor> m_travelBarColors[3];
-        float m_travelBarAlpha[3] = {1.0f, 1.0f, 1.0f};
-        float m_viewHeight = 0.0f;               // updateResolution's height
+        std::vector<BarColor> m_travelBarColors[4];
+        float m_travelBarAlpha[4] = {1.0f, 1.0f, 1.0f, 1.0f};
+        float m_viewHeight = 0.0f; // updateResolution's height
         InventoryWidget *m_craftingInventoryWidget;
         FormulaDetailsWidget *m_formulaDetailsWidget; // Read by Game.
         InventoryWidget *m_vendorInventoryWidget;
