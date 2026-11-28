@@ -4,7 +4,7 @@
 
 struct PixelInput
 {
-    float4 position : SV_POSITION;
+    [[vk::ext_decorate(18)]] float4 position : SV_POSITION; // SPIR-V Invariant, shared with the depth pass.
     [[vk::location(0)]] float4 color : COLOR;
     [[vk::location(1)]] float4 clipPosition : TEXCOORD0;
     [[vk::location(2)]] float3 normal : TEXCOORD1;

@@ -1,4 +1,4 @@
-#include "WorldUniforms.hlsli"
+#include "WorldPosition.hlsli"
 #include "World.hlsli"
 
 #if CUBE_INSTANCED
@@ -57,19 +57,9 @@ PixelInput main([[vk::location(0)]] float4 position : POSITION,
     // Back light direction in model coordinates; artistic lighting vector.
     float backLight = 0.5 * abs(dot(worldNormal, normalize(float3(0.6, 0.4, 0.7)))) + 0.5;
     float3 directionalLight = saturate(frontLight * lightFrontColor.rgb * warm + backLight * lightBackColor.rgb);
-    float4 vertex = float4(position.xyz * 255, 1);
-    // Terrain draws translate only, so the offset applies unchanged before the world matrix.
-    vertex.xyz += foliageOffset(position.w, mul(vertex, worldMatrix).xyz);
-    // The vertex in the world, the view and the clip space in turn; the depth offset moves the clip depth.
-    const float4 world = mul(vertex, worldMatrix);
-    const float4 view = mul(world, viewMatrix);
-    output.position = mul(view, projMatrix);
-    output.position.z -= depthOffset;
-    output.clipPosition = output.position;
-    output.position.xy += temporalJitter.xy * output.position.w;
-    float3 worldPosition = world.xyz;
-    output.worldPosition = worldPosition;
-    output.viewPosition = view.xyz;
+    output.position = projectWorldVertex(position, worldMatrix, output.worldPosition, output.viewPosition,
+                                         output.clipPosition);
+    const float3 worldPosition = output.worldPosition;
     float3 lighting = directionalLight * (color.a * materialColor.a) + backLight * ambientColor.rgb;
     float3 pointLighting = 0;
     for (int light = 0; light < 10; ++light)
