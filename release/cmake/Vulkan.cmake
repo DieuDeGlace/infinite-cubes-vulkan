@@ -88,6 +88,7 @@ endfunction()
 
 set(world_shaders src/gfx/shaders)
 add_vulkan_shader(${world_shaders} WorldVertexShader vs_6_0)
+add_vulkan_shader(${world_shaders} DepthVertexShader vs_6_0)
 add_vulkan_shader(${world_shaders} WaterVertexShader vs_6_0)
 add_vulkan_shader(${world_shaders} ShadowVertexShader vs_6_0)
 add_vulkan_shader(${world_shaders} ReflectiveShadowVertexShader vs_6_0)

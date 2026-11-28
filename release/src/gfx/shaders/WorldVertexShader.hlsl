@@ -1,4 +1,4 @@
-#include "WorldUniforms.hlsli"
+#include "WorldPosition.hlsli"
 #include "World.hlsli"
 
 PixelInput main([[vk::location(0)]] float4 position : POSITION,
@@ -13,8 +13,6 @@ PixelInput main([[vk::location(0)]] float4 position : POSITION,
         face == 3 ? float3(0, -1, 0) :
         face == 4 ? float3(0, 0, 1) : float3(0, 0, -1);
     float4x4 worldView = mul(worldMatrix, viewMatrix);
-    float4x4 worldViewProjection = mul(worldView, projMatrix);
-    worldViewProjection[3][2] -= depthOffset;
     output.normal = normalize(mul(normal, (float3x3)worldView));
     const float3 x = worldMatrix[0].xyz;
     const float3 y = worldMatrix[1].xyz;
@@ -34,15 +32,9 @@ PixelInput main([[vk::location(0)]] float4 position : POSITION,
     // Back light direction in model coordinates; artistic lighting vector.
     float backLight = 0.5 * abs(dot(worldNormal, normalize(float3(0.6, 0.4, 0.7)))) + 0.5;
     float3 directionalLight = saturate(frontLight * lightFrontColor.rgb * warm + backLight * lightBackColor.rgb);
-    float4 vertex = float4(position.xyz * 255, 1);
-    // Terrain draws translate only, so the offset applies unchanged before the world matrix.
-    vertex.xyz += foliageOffset(position.w, mul(vertex, worldMatrix).xyz);
-    output.position = mul(vertex, worldViewProjection);
-    output.clipPosition = output.position;
-    output.position.xy += temporalJitter.xy * output.position.w;
-    float3 worldPosition = mul(vertex, worldMatrix).xyz;
-    output.worldPosition = worldPosition;
-    output.viewPosition = mul(vertex, worldView).xyz;
+    output.position = projectWorldVertex(position, worldMatrix, output.worldPosition, output.viewPosition,
+                                         output.clipPosition);
+    const float3 worldPosition = output.worldPosition;
     float3 lighting = directionalLight * (color.a * materialColor.a) + backLight * ambientColor.rgb;
     float3 pointLighting = 0;
     for (int light = 0; light < 10; ++light)

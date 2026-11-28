@@ -16,6 +16,7 @@
 #include "spirv/InterfaceVertexShader.h"
 #include "spirv/PostCopyShader.h"
 #include "spirv/PostVertexShader.h"
+#include "spirv/DepthVertexShader.h"
 #include "spirv/ShadowVertexShader.h"
 #include "spirv/ReflectiveShadowVertexShader.h"
 #include "spirv/ReflectiveShadowPixelShader.h"
@@ -404,6 +405,7 @@ void VulkanContext::createShaders()
     m_vertexShaders[4] = create(PostVertexShader, sizeof(PostVertexShader));
     m_vertexShaders[5] = create(ReflectiveShadowVertexShader, sizeof(ReflectiveShadowVertexShader));
     m_vertexShaders[6] = create(WaterVertexShader, sizeof(WaterVertexShader));
+    m_vertexShaders[7] = create(DepthVertexShader, sizeof(DepthVertexShader));
     m_fragmentShaders[0] = create(WorldPixelShader, sizeof(WorldPixelShader));
     m_fragmentShaders[1] = create(SkyPixelShader, sizeof(SkyPixelShader));
     m_fragmentShaders[2] = create(WaterPixelShader, sizeof(WaterPixelShader));
@@ -1337,6 +1339,9 @@ VkPipeline VulkanContext::pipeline()
         attributes[0].format = VK_FORMAT_R32G32B32A32_SFLOAT;
         attributes[1].format = VK_FORMAT_R32G32B32A32_SFLOAT;
         attributes[1].offset = 16;
+    } else if (m_state.program == VulkanProgram::Depth) {
+        vertexShader = 7;
+        attributesUsed = 1;
     } else if (m_state.program == VulkanProgram::Shadow) {
         vertexShader = 3;
         attributesUsed = 1;
@@ -1403,7 +1408,7 @@ VkPipeline VulkanContext::pipeline()
     rendering.depthAttachmentFormat = depthFormat;
     VkGraphicsPipelineCreateInfo info {VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO};
     info.pNext = &rendering;
-    info.stageCount = m_state.program == VulkanProgram::Shadow ? 1 : 2;
+    info.stageCount = stages[1].module ? 2 : 1;
     info.pStages = stages;
     info.pVertexInputState = &vertex;
     info.pInputAssemblyState = &assembly;

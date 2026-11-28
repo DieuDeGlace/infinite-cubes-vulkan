@@ -27,6 +27,7 @@ enum class VulkanProgram {
     Textured,
     Interface,
     Shadow,
+    Depth,
     ReflectiveShadow,
     PostCopy,
     TemporalResolve,
@@ -157,7 +158,7 @@ private:
     std::array<VkSampler, 2> m_textureSamplers{};
     VkSampler m_sampler = VK_NULL_HANDLE;
     VkSampler m_pointSampler = VK_NULL_HANDLE;
-    std::array<VkShaderModule, 7> m_vertexShaders = {};
+    std::array<VkShaderModule, 8> m_vertexShaders = {};
     std::array<VkShaderModule, static_cast<size_t>(VulkanProgram::Count)> m_fragmentShaders = {};
     using PipelineKey = std::tuple<VulkanProgram, RasterizerSlot, DepthStencilSlot, BlendSlot, VkFormat, VkFormat,
                                    VkSampleCountFlagBits>;
