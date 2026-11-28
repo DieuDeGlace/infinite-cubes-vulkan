@@ -17,6 +17,15 @@ struct Dialog;
 // the speech widget shows them one after another.
 void writeDialogs(std::vector<Dialog> &dialogs, const std::wstring &text, const plasma::Vector<4, float> &color);
 
+// A row in the quest tracker and the cancellation menu. IDs survive list reordering.
+struct TrackedQuest {
+    enum Source { Villager, Referral };
+    Source source;
+    int worldSeed;
+    long long id; // villager ID or encounter serial
+    std::wstring description;
+};
+
 struct TownQuest {
     static constexpr int ActiveLimit = 3;
     static constexpr int TargetLimit = 5;

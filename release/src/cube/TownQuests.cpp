@@ -8,6 +8,7 @@
 #include <chrono>
 #include <cmath>
 #include <limits>
+#include <utility>
 
 namespace cube {
 namespace {
@@ -356,28 +357,49 @@ bool Game::assignTownQuestTargets()
     return changed;
 }
 
-std::wstring Game::townQuestSummary()
+void Game::collectTrackedQuests(std::vector<TrackedQuest> &quests)
 {
+    quests.clear();
     const Creature *player = m_world->getLocalCreature();
     if (!player || !player->m_playerData || m_currentCharacterSlot < 0)
-        return {};
+        return;
     const auto current = blockPosition(player->m_entityData.position);
-    std::wstring text = encounterSummary();
+    appendEncounterQuests(quests);
     for (const auto &quest : player->m_playerData->townQuests) {
         if (quest.worldSeed != m_world->m_seed || quest.rewarded)
             continue;
-        if (!text.empty())
-            text += L"\n";
+        std::wstring text;
         if (quest.ready()) {
-            text += L"Return to the villager (" + directionTo(current, quest.giverPosition) + L")";
+            text = L"Return to the villager (" + directionTo(current, quest.giverPosition) + L")";
         } else if (quest.pending()) {
-            text += L"Look for what troubles the village, outside it";
+            text = L"Look for what troubles the village, outside it";
         } else {
-            text += objective(m_speech, quest) + L" (" + std::to_wstring(quest.progress()) + L"/" +
-                    std::to_wstring(quest.needed()) + L", " + directionTo(current, quest.targetPosition) + L")";
+            text = objective(m_speech, quest) + L" (" + std::to_wstring(quest.progress()) + L"/" +
+                   std::to_wstring(quest.needed()) + L", " + directionTo(current, quest.targetPosition) + L")";
         }
+        quests.push_back({TrackedQuest::Villager, quest.worldSeed, quest.giver, std::move(text)});
     }
-    return text;
+}
+
+bool Game::cancelQuest(const TrackedQuest &quest)
+{
+    Creature *player = m_world->getLocalCreature();
+    if (!player || !player->m_playerData || m_currentCharacterSlot < 0 || quest.worldSeed != m_world->m_seed)
+        return false;
+    if (quest.source == TrackedQuest::Referral) {
+        if (!cancelEncounter(quest))
+            return false;
+    } else {
+        auto &requests = player->m_playerData->townQuests;
+        auto found = std::find_if(requests.begin(), requests.end(), [&](const TownQuest &request) {
+            return request.giver == quest.id && request.worldSeed == quest.worldSeed && !request.rewarded;
+        });
+        if (found == requests.end())
+            return false;
+        requests.erase(found);
+    }
+    saveCharacter();
+    return true;
 }
 
 } // namespace cube

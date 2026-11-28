@@ -9457,12 +9457,13 @@ void Game::updateTravelSkills()
 
 float Game::travelBarAlpha(int skill) const
 {
-    constexpr double Shown = 55.0, Fade = 5.0;
+    constexpr double Fade = 5.0;
+    const double shown = skill == 2 ? 55.0 : 60.0; // riding keeps its original timeout
     const double now = std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count();
     const double age = now - m_travelTrainedAt[skill];
-    if (age < 0.0 || age >= Shown + Fade)
+    if (age < 0.0 || age >= shown + Fade)
         return 0.0f;
-    return age <= Shown ? 1.0f : float(1.0 - (age - Shown) / Fade);
+    return age <= shown ? 1.0f : float(1.0 - (age - shown) / Fade);
 }
 
 }

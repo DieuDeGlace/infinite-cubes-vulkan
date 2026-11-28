@@ -695,7 +695,7 @@ void Interface::load(const std::vector<ResolutionInfo> *displayModes)
     m_inGame.m_questionWidget->getNode()->setVisible(false);
     m_inGame.m_equipmentInventoryWidget->getNode()->setParent(m_inGame.m_node);
     m_inGame.m_systemWidget = new SystemWidget(m_game, m_blackWidget->instance(m_inGame.m_node));
-    m_inGame.m_systemWidget->resizeTo(150.0f, 150.0f, true);
+    m_inGame.m_systemWidget->resizeTo(150.0f, 180.0f, true);
     m_inGame.m_systemWidget->getNode()->setVisible(false);
 
     // The cursor, which the pointer must not hit.
@@ -1090,8 +1090,10 @@ void Interface::toggleOptionsWidget()
 void Interface::toggleSystemWidget()
 {
     m_inGame.m_systemWidget->m_node->setVisible(!m_inGame.m_systemWidget->m_node->isVisible());
-    if (m_inGame.m_systemWidget->m_node->isVisible())
+    if (m_inGame.m_systemWidget->m_node->isVisible()) {
+        m_inGame.m_systemWidget->showQuestList(false);
         m_inGame.m_equipmentInventoryWidget->m_node->setVisible(false);
+    }
 }
 
 void Interface::toggleWorldMap()
@@ -1599,7 +1601,13 @@ void Interface::update(float step)
     previousHitCombo = (unsigned char)m_game->m_world->m_localCreature->m_entityData.hitCombo;
     m_inGame.m_comboPoints->setVisible(m_inGame.m_comboPoints->isPlaying());
     m_inGame.m_missionTag->setVisible(m_inGame.m_missionTag->isPlaying());
-    auto questText = m_game->townQuestSummary();
+    m_game->collectTrackedQuests(m_inGame.m_trackedQuests);
+    std::wstring questText;
+    for (const auto &quest : m_inGame.m_trackedQuests) {
+        if (!questText.empty())
+            questText += L"\n";
+        questText += quest.description;
+    }
     if (questText != m_inGame.m_townQuestText) {
         m_inGame.m_townQuestTracker->setText(questText);
         m_inGame.m_townQuestText = std::move(questText);

@@ -294,14 +294,16 @@ public:
     // The HUD's travel-skill bars: when each skill last gained time (Game clock, seconds), and the time it had.
     std::array<double, 3> m_travelTrainedAt {-1.0e9, -1.0e9, -1.0e9};
     std::array<float, 3> m_travelSeenSeconds {-1.0f, -1.0f, -1.0f};
-    // How visible skill i's bar is now: 1 for 55 seconds after it was trained, fading out over the next 5.
+    // How visible skill i's bar is now: swimming and climbing fade over five seconds after a minute idle.
     float travelBarAlpha(int skill) const;
-    std::wstring encounterSummary();
+    void appendEncounterQuests(std::vector<TrackedQuest> &quests);
+    bool cancelEncounter(const TrackedQuest &quest);
     void keepEncounters();
     bool updateTownQuest(const ServerUpdates::KillPacket &kill);
     // Gives the requests taken without targets an enemy group once one is near the player.
     bool assignTownQuestTargets();
-    std::wstring townQuestSummary();
+    void collectTrackedQuests(std::vector<TrackedQuest> &quests);
+    bool cancelQuest(const TrackedQuest &quest);
     void updateTextFx(int milliseconds);
     void updateUsableItems();
     // Refills m_vendorInventory: the sold items (newest first) for tab 1, else the shop of the vendor by its class.

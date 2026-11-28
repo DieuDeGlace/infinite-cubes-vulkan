@@ -10,6 +10,7 @@
 #include "plasma/Vector.h"
 #include "cube/ResolutionInfo.h"
 #include "cube/InterfaceIds.h"
+#include "cube/TownQuest.h"
 
 namespace plasma {
 class Node;
@@ -141,6 +142,7 @@ struct Interface {
         plasma::Node *m_missionTag; // "missiontag-white"
         plasma::Node *m_townQuestTracker;
         std::wstring m_townQuestText;
+        std::vector<TrackedQuest> m_trackedQuests;
         PreviewWidget *m_previewWidget;
         std::vector<SpriteWidget *> m_equipmentSlots;
         SpriteWidget *m_quickItemSprites[QuickSlotCount];
