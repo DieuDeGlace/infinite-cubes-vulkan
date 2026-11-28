@@ -194,7 +194,7 @@ static void draw()
     RECT client = {};
     GetClientRect(window, &client);
     const VkExtent2D clientSize {static_cast<uint32_t>(client.right), static_cast<uint32_t>(client.bottom)};
-    const auto samples = static_cast<unsigned>(std::max(1, s_options.antiAliasingSamples));
+    const unsigned samples = s_options.antiAliasing ? std::max(1, s_options.antiAliasingSamples) : 1;
     const VkExtent2D extent = graphicsContext->beginFrame(clientSize, s_options.vsync != 0, samples,
                                                           s_options.temporalAA != 0, s_options.spatialAA != 0);
     if (!extent.width || !extent.height) {

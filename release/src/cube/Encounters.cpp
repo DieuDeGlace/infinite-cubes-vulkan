@@ -9,6 +9,7 @@
 #include <algorithm>
 #include <cmath>
 #include <limits>
+#include <utility>
 #include <random>
 
 namespace cube {
@@ -490,23 +491,41 @@ void Game::updateEncounterQuests()
         saveCharacter();
 }
 
-std::wstring Game::encounterSummary()
+void Game::appendEncounterQuests(std::vector<TrackedQuest> &quests)
 {
     const Creature *player = m_world->getLocalCreature();
-    std::wstring text;
     for (const Encounter &encounter : m_world->m_encounters) {
         if (!encounter.accepted || encounter.finished() || encounter.worldSeed != m_world->m_seed)
             continue;
-        if (!text.empty())
-            text += L"\n";
+        std::wstring text;
         if (encounter.fromTown && encounter.siteDone()) {
             const std::array<int, 3> town {encounter.town[0], encounter.town[1], 0};
-            text += L"Return to the village for your reward (" + direction(town, player->m_entityData.position) + L")";
+            text = L"Return to the village for your reward (" + direction(town, player->m_entityData.position) + L")";
         } else {
-            text += objective(encounter) + L" (" + direction(goal(encounter), player->m_entityData.position) + L")";
+            text = objective(encounter) + L" (" + direction(goal(encounter), player->m_entityData.position) + L")";
         }
+        quests.push_back({TrackedQuest::Referral, encounter.worldSeed, encounter.serial, std::move(text)});
     }
-    return text;
+}
+
+bool Game::cancelEncounter(const TrackedQuest &quest)
+{
+    World *host = encounterHost();
+    if (!host || !m_world->m_encountersLive)
+        return false;
+    const HostLock lock(*host);
+    auto &encounters = host->m_encounters;
+    auto found = std::find_if(encounters.begin(), encounters.end(), [&](const Encounter &encounter) {
+        return encounter.serial == quest.id && encounter.worldSeed == quest.worldSeed &&
+               encounter.accepted && !encounter.finished();
+    });
+    if (found == encounters.end())
+        return false;
+    // Release the referral. Its site and actors resume their ordinary overworld lifecycle.
+    found->accepted = false;
+    found->fromTown = false;
+    mirrorEncounters(*host);
+    return true;
 }
 
 void Game::keepEncounters()

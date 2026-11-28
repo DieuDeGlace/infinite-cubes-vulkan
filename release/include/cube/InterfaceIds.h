@@ -22,6 +22,7 @@ enum SystemMenuButton {
     SystemMenuControls = 1,
     SystemMenuStartMenu = 2,
     SystemMenuExit = 3,
+    SystemMenuCancelQuest,
 };
 
 // Interface::handleMouseDown/Up route 0,1,2 to primary, secondary, middle pointer events; main.cpp passes these values

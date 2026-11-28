@@ -106,6 +106,20 @@ static plasma::Node *takeGuiTemplate(plasma::Node &gui, const wchar_t *name, pla
     return node;
 }
 
+static void collectBarColors(plasma::Node *node, std::vector<Interface::InGame::BarColor> &colors)
+{
+    const auto remember = [&](auto &attribute) { colors.push_back({&attribute, attribute.value()[3]}); };
+    if (auto *text = dynamic_cast<plasma::TextShape *>(node->m_shape)) {
+        remember(text->m_color);
+        remember(text->m_strokeColor);
+        remember(text->m_extrusionColor);
+    } else if (node->m_shape) {
+        remember(node->m_display->m_fillColor);
+    }
+    for (auto *child : node->m_children)
+        collectBarColors(child, colors);
+}
+
 // Builds the whole widget tree. Every screen is a child of the engine's root: the start menu, the character selection
 // and creation, the world selection and creation, and the in-game interface (m_inGame.m_node). The icons of icons.plx
 // stay in a node without a parent (m_icons), as do the templates taken out of gui.plx (the life bars, "blackwidget",
@@ -609,6 +623,7 @@ void Interface::load(const std::vector<ResolutionInfo> *displayModes)
         bar->transformation()->m_deformation.value().scale(TravelBarScale, TravelBarScale);
         bar->transformation()->attributesChanged(true);
         bar->setVisible(false);
+        collectBarColors(bar, m_inGame.m_travelBarColors[i]);
         m_inGame.m_travelBars[i] = bar;
         m_inGame.m_travelBarFills[i] = bar->findNode(L"xpbar");
     }
@@ -722,7 +737,7 @@ void Interface::load(const std::vector<ResolutionInfo> *displayModes)
     m_inGame.m_questionWidget->getNode()->setVisible(false);
     m_inGame.m_equipmentInventoryWidget->getNode()->setParent(m_inGame.m_node);
     m_inGame.m_systemWidget = new SystemWidget(m_game, m_blackWidget->instance(m_inGame.m_node));
-    m_inGame.m_systemWidget->resizeTo(150.0f, 150.0f, true);
+    m_inGame.m_systemWidget->resizeTo(150.0f, 180.0f, true);
     m_inGame.m_systemWidget->getNode()->setVisible(false);
 
     // The cursor, which the pointer must not hit.
@@ -1134,8 +1149,10 @@ void Interface::toggleOptionsWidget()
 void Interface::toggleSystemWidget()
 {
     m_inGame.m_systemWidget->m_node->setVisible(!m_inGame.m_systemWidget->m_node->isVisible());
-    if (m_inGame.m_systemWidget->m_node->isVisible())
+    if (m_inGame.m_systemWidget->m_node->isVisible()) {
+        m_inGame.m_systemWidget->showQuestList(false);
         m_inGame.m_equipmentInventoryWidget->m_node->setVisible(false);
+    }
 }
 
 void Interface::toggleWorldMap()
@@ -1643,7 +1660,13 @@ void Interface::update(float step)
     previousHitCombo = (unsigned char)m_game->m_world->m_localCreature->m_entityData.hitCombo;
     m_inGame.m_comboPoints->setVisible(m_inGame.m_comboPoints->isPlaying());
     m_inGame.m_missionTag->setVisible(m_inGame.m_missionTag->isPlaying());
-    auto questText = m_game->townQuestSummary();
+    m_game->collectTrackedQuests(m_inGame.m_trackedQuests);
+    std::wstring questText;
+    for (const auto &quest : m_inGame.m_trackedQuests) {
+        if (!questText.empty())
+            questText += L"\n";
+        questText += quest.description;
+    }
     if (questText != m_inGame.m_townQuestText) {
         m_inGame.m_townQuestTracker->setText(questText);
         m_inGame.m_townQuestText = std::move(questText);
@@ -1676,8 +1699,11 @@ void Interface::update(float step)
             fill->m_transformation->m_deformation.value().scale(row.progress, 1.0f);
             fill->m_transformation->attributesChanged(true);
         }
-        bar->m_display->m_fillColor = plasma::Vector<4, float>(1.0f, 1.0f, 1.0f, row.alpha);
-        bar->m_display->attributesChanged(true);
+        if (m_inGame.m_travelBarAlpha[i] != row.alpha) {
+            for (const auto &color : m_inGame.m_travelBarColors[i])
+                color.attribute->value()[3] = color.opacity * row.alpha;
+            m_inGame.m_travelBarAlpha[i] = row.alpha;
+        }
         placeNode(bar, Left + TravelSkillBarWidget::IconSize + TravelSkillBarWidget::IconGap,
                   rowTop + TravelSkillBarWidget::RowHeight * 0.5f, 0.0f, 0.5f);
         bar->setVisible(true);

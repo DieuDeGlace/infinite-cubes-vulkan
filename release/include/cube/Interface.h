@@ -10,9 +10,11 @@
 #include "plasma/Vector.h"
 #include "cube/ResolutionInfo.h"
 #include "cube/InterfaceIds.h"
+#include "cube/TownQuest.h"
 
 namespace plasma {
 class Node;
+template<typename T> class ContinuousAttribute;
 class Widget;
 }
 
@@ -125,6 +127,13 @@ struct Interface {
         TravelSkillBarWidget *m_travelSkillBars; // the travel-skill icons, at the middle left
         plasma::Node *m_travelBars[3] = {};      // a scaled copy of m_levelInfo beside each icon
         plasma::Node *m_travelBarFills[3] = {};  // "xpbar" under each
+        // Each cloned shape draws its own colour. Keep its original opacity for the travel bar's fade.
+        struct BarColor {
+            plasma::ContinuousAttribute<plasma::Vector<4, float>> *attribute;
+            float opacity;
+        };
+        std::vector<BarColor> m_travelBarColors[3];
+        float m_travelBarAlpha[3] = {1.0f, 1.0f, 1.0f};
         float m_viewHeight = 0.0f;               // updateResolution's height
         InventoryWidget *m_craftingInventoryWidget;
         FormulaDetailsWidget *m_formulaDetailsWidget; // Read by Game.
@@ -144,6 +153,7 @@ struct Interface {
         plasma::Node *m_missionTag; // "missiontag-white"
         plasma::Node *m_townQuestTracker;
         std::wstring m_townQuestText;
+        std::vector<TrackedQuest> m_trackedQuests;
         plasma::Node *m_frameStats; // Game::updateFrameStats' readout, at the top centre
         PreviewWidget *m_previewWidget;
         std::vector<SpriteWidget *> m_equipmentSlots;
