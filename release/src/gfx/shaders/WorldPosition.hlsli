@@ -1,3 +1,7 @@
+// The projected position of a world vertex, shared by WorldVertexShader and DepthVertexShader.
+#ifndef WORLD_POSITION_HLSLI
+#define WORLD_POSITION_HLSLI
+
 #include "WorldUniforms.hlsli"
 
 // Both passes must rasterize the same depth, including leaf motion, the draw's depth offset and temporal jitter.
@@ -18,3 +22,5 @@ float4 projectWorldVertex(float4 position, float4x4 modelMatrix, out float3 worl
     rasterPosition.xy += temporalJitter.xy * clip.w;
     return rasterPosition;
 }
+
+#endif

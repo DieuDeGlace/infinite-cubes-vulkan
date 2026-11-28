@@ -161,7 +161,8 @@ struct VulkanContext::Frame {
     size_t pageIndex = 0;
     std::vector<VkDescriptorPool> pools;
     size_t poolIndex = 0;
-    std::map<std::pair<std::array<VkImageView, ImageBindings.size()>, std::array<VkSampler, 2>>, VkDescriptorSet> imageSets;
+    std::map<std::pair<std::array<VkImageView, ImageBindings.size()>, std::array<VkSampler, 2>>, VkDescriptorSet>
+        imageSets;
     std::vector<std::shared_ptr<void>> inUse;
     VkPipeline boundPipeline = VK_NULL_HANDLE;
     // The GPU's start and end of the frame's commands; timed once a submitted frame wrote them.
@@ -1215,28 +1216,29 @@ VkDescriptorSet VulkanContext::textureSet()
     std::array<ImagePtr, ImageBindings.size()> textures;
     if (m_pipelineSource)
         textures = m_textures;
-    else switch (m_state.program) {
-    case VulkanProgram::Textured:
-        textures[0] = m_textures[0];
-        break;
-    case VulkanProgram::Interface:
-        textures[0] = m_textures[0];
-        textures[1] = m_textures[1];
-        break;
-    case VulkanProgram::World:
-        textures[1] = m_textures[1];
-        textures[2] = m_textures[2];
-        textures[3] = m_textures[3];
-        break;
-    case VulkanProgram::Water:
-        textures[0] = m_waterColor;
-        textures[2] = m_textures[2];
-        textures[3] = m_waterDepth;
-        break;
-    default:
-        textures = m_textures;
-        break;
-    }
+    else
+        switch (m_state.program) {
+        case VulkanProgram::Textured:
+            textures[0] = m_textures[0];
+            break;
+        case VulkanProgram::Interface:
+            textures[0] = m_textures[0];
+            textures[1] = m_textures[1];
+            break;
+        case VulkanProgram::World:
+            textures[1] = m_textures[1];
+            textures[2] = m_textures[2];
+            textures[3] = m_textures[3];
+            break;
+        case VulkanProgram::Water:
+            textures[0] = m_waterColor;
+            textures[2] = m_textures[2];
+            textures[3] = m_waterDepth;
+            break;
+        default:
+            textures = m_textures;
+            break;
+        }
     for (auto &image : textures) {
         if (!image || image == target.color || image == target.depth || image == target.resolve ||
             (!image->pendingUpload && image->layout == VK_IMAGE_LAYOUT_UNDEFINED))
@@ -1257,7 +1259,8 @@ VkDescriptorSet VulkanContext::textureSet()
         key[i] = textures[i]->view;
     auto samplers = m_textureSamplers;
     for (auto &sampler : samplers)
-        if (!sampler) sampler = m_sampler;
+        if (!sampler)
+            sampler = m_sampler;
     const auto descriptorKey = std::make_pair(key, samplers);
     const auto cached = m_frame->imageSets.find(descriptorKey);
     if (cached != m_frame->imageSets.end())
@@ -1307,8 +1310,9 @@ void VulkanContext::drawIndexed(uint32_t indexCount, uint32_t firstIndex, int32_
 {
     if (!m_frame || !indexCount || !m_vertex.buffer || !m_index.buffer || !m_uniforms)
         return;
-    const bool textured = m_pipelineSource || m_state.program == VulkanProgram::Textured || m_state.program == VulkanProgram::Interface ||
-                          m_state.program == VulkanProgram::World || m_state.program == VulkanProgram::Water;
+    const bool textured = m_pipelineSource || m_state.program == VulkanProgram::Textured ||
+                          m_state.program == VulkanProgram::Interface || m_state.program == VulkanProgram::World ||
+                          m_state.program == VulkanProgram::Water;
     bindDrawState(textured);
     const auto command = m_frame->command;
     vkCmdBindVertexBuffers(command, 0, 1, &m_vertex.buffer->handle, &m_vertex.offset);

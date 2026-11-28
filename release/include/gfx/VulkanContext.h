@@ -66,6 +66,7 @@ class VulkanPipelineSource {
 public:
     virtual VkPipeline pipeline(VkDevice device, VkPipelineLayout layout, VkFormat color, VkFormat depth,
                                 VkSampleCountFlagBits samples) = 0;
+
 protected:
     ~VulkanPipelineSource() = default;
 };
@@ -99,12 +100,15 @@ public:
     void beginSurface(const ImagePtr &color, const ImagePtr &depth);
     void endSurface();
     void snapshotWaterBackground();
-    void bindWaterBackground() { bindTexture(0, m_waterColor); bindTexture(3, m_waterDepth); }
+    void bindWaterBackground()
+    {
+        bindTexture(0, m_waterColor);
+        bindTexture(3, m_waterDepth);
+    }
     void setTextureSampler(unsigned slot, VkFilter min, VkFilter mag, VkSamplerAddressMode u, VkSamplerAddressMode v);
 
     void setDrawState(VulkanDrawState state, const void *uniforms, size_t uniformSize);
-    void setDrawState(VulkanPipelineSource &source, const void *uniforms, size_t uniformSize,
-                      const VkRect2D *scissor);
+    void setDrawState(VulkanPipelineSource &source, const void *uniforms, size_t uniformSize, const VkRect2D *scissor);
     void clearAttachments(const VkClearColorValue *color, const float *depth, const VkRect2D *rectangle);
     void bindTexture(unsigned slot, const ImagePtr &image);
     void bindVertex(const BufferPtr &buffer);
@@ -171,7 +175,7 @@ private:
     VkDescriptorSetLayout m_uniformLayout = VK_NULL_HANDLE;
     VkDescriptorSetLayout m_textureLayout = VK_NULL_HANDLE;
     std::map<std::tuple<VkFilter, VkFilter, VkSamplerAddressMode, VkSamplerAddressMode>, VkSampler> m_samplers;
-    std::array<VkSampler, 2> m_textureSamplers{};
+    std::array<VkSampler, 2> m_textureSamplers {};
     VkSampler m_sampler = VK_NULL_HANDLE;
     VkSampler m_pointSampler = VK_NULL_HANDLE;
     std::array<VkShaderModule, 11> m_vertexShaders = {};
